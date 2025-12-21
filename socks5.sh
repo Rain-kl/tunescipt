@@ -1,11 +1,27 @@
 #!/bin/bash
-# SOCKS5代理服务器管理脚本（IPv6支持）
+# SOCKS5代理服务器管理脚本(IPv6支持)
 
 # 检测root权限
 if [ "$EUID" -ne 0 ]; then
     echo "❌ 请使用sudo或root用户运行脚本" >&2
     exit 1
 fi
+
+# 检测操作系统类型
+detect_os() {
+    if [ -f /etc/os-release ]; then
+        . /etc/os-release
+        OS=$ID
+    elif [ -f /etc/alpine-release ]; then
+        OS="alpine"
+    else
+        OS=$(uname -s)
+    fi
+    echo $OS
+}
+
+# 全局变量
+OS_TYPE=$(detect_os)
 
 # 获取当前配置的端口
 get_current_port() {
@@ -41,20 +57,49 @@ install_socks5() {
     echo "================================"
     
     # 检查是否已安装
-    if systemctl is-active --quiet danted 2>/dev/null; then
-        echo "⚠️  检测到SOCKS5代理已在运行"
-        read -p "是否重新安装? (y/n): " REINSTALL
-        if [[ ! "$REINSTALL" =~ ^[Yy]$ ]]; then
-            echo "取消安装"
-            return
+    if [ "$OS_TYPE" = "alpine" ]; then
+        if rc-service danted status &>/dev/null; then
+            echo "⚠️  检测到SOCKS5代理已在运行"
+            read -p "是否重新安装? (y/n): " REINSTALL
+            if [[ ! "$REINSTALL" =~ ^[Yy]$ ]]; then
+                echo "取消安装"
+                return
+            fi
+            rc-service danted stop
         fi
-        systemctl stop danted
+    else
+        if systemctl is-active --quiet danted 2>/dev/null; then
+            echo "⚠️  检测到SOCKS5代理已在运行"
+            read -p "是否重新安装? (y/n): " REINSTALL
+            if [[ ! "$REINSTALL" =~ ^[Yy]$ ]]; then
+                echo "取消安装"
+                return
+            fi
+            systemctl stop danted
+        fi
     fi
     
     # 安装依赖
     echo "🔧 安装必要组件..."
-    apt update &> /dev/null
-    apt install -y dante-server netcat-openbsd curl &> /dev/null
+    case $OS_TYPE in
+        alpine)
+            apk update &> /dev/null
+            apk add dante-server netcat-openbsd curl openrc &> /dev/null
+            # Alpine 需要启用服务管理
+            rc-update add danted default &> /dev/null
+            ;;
+        ubuntu|debian)
+            apt update &> /dev/null
+            apt install -y dante-server netcat-openbsd curl &> /dev/null
+            ;;
+        centos|rhel|fedora)
+            yum install -y dante-server nc curl &> /dev/null
+            ;;
+        *)
+            echo "❌ 不支持的操作系统: $OS_TYPE"
+            return 1
+            ;;
+    esac
     
     # 配置参数
     read -p "🛡️ 输入代理端口 (默认1080): " PORT
@@ -82,9 +127,13 @@ install_socks5() {
     # 创建系统用户用于SOCKS5认证
     echo "👥 创建SOCKS5用户..."
     if id "$USERNAME" &>/dev/null; then
-        echo "⚠️  用户 $USERNAME 已存在，将使用现有用户"
+        echo "⚠️  用户 $USERNAME 已存在,将使用现有用户"
     else
-        useradd -r -s /bin/false "$USERNAME"
+        if [ "$OS_TYPE" = "alpine" ]; then
+            adduser -D -H -s /sbin/nologin "$USERNAME"
+        else
+            useradd -r -s /bin/false "$USERNAME"
+        fi
     fi
     echo "$USERNAME:$PASSWORD" | chpasswd
     
@@ -134,8 +183,12 @@ EOF
     
     # 启动服务
     echo "🚀 启动Dante服务..."
-    systemctl restart danted
-    systemctl enable danted &> /dev/null
+    if [ "$OS_TYPE" = "alpine" ]; then
+        rc-service danted restart
+    else
+        systemctl restart danted
+        systemctl enable danted &> /dev/null
+    fi
     
     # 验证安装
     echo "✅ 安装完成，测试连接..."
@@ -199,7 +252,11 @@ manage_user() {
                 echo ""
             done
             
-            useradd -r -s /bin/false "$NEW_USERNAME"
+            if [ "$OS_TYPE" = "alpine" ]; then
+                adduser -D -H -s /sbin/nologin "$NEW_USERNAME"
+            else
+                useradd -r -s /bin/false "$NEW_USERNAME"
+            fi
             echo "$NEW_USERNAME:$NEW_PASSWORD" | chpasswd
             echo "✅ 用户 $NEW_USERNAME 已创建"
             ;;
@@ -258,8 +315,12 @@ manage_user() {
                 fi
                 
                 # 重启服务
-                systemctl restart danted
-                echo "✅ 端口已更新为 $NEW_PORT，服务已重启"
+                if [ "$OS_TYPE" = "alpine" ]; then
+                    rc-service danted restart
+                else
+                    systemctl restart danted
+                fi
+                echo "✅ 端口已更新为 $NEW_PORT,服务已重启"
             else
                 echo "❌ 配置文件不存在"
             fi
@@ -280,12 +341,27 @@ uninstall_socks5() {
     echo "================================"
     
     echo "🛑 停止Dante服务..."
-    systemctl stop danted &> /dev/null
-    systemctl disable danted &> /dev/null
+    if [ "$OS_TYPE" = "alpine" ]; then
+        rc-service danted stop &> /dev/null
+        rc-update del danted default &> /dev/null
+    else
+        systemctl stop danted &> /dev/null
+        systemctl disable danted &> /dev/null
+    fi
     
     echo "🗑️  删除软件包..."
-    apt remove --purge -y dante-server &> /dev/null
-    apt autoremove -y &> /dev/null
+    case $OS_TYPE in
+        alpine)
+            apk del dante-server &> /dev/null
+            ;;
+        ubuntu|debian)
+            apt remove --purge -y dante-server &> /dev/null
+            apt autoremove -y &> /dev/null
+            ;;
+        centos|rhel|fedora)
+            yum remove -y dante-server &> /dev/null
+            ;;
+    esac
     
     echo "📁 删除配置文件..."
     rm -f /etc/danted.conf
