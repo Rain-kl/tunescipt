@@ -528,7 +528,8 @@ if [[ "$REC_SWAP_MODE" == "create" ]]; then
   echo "   路径: ${REC_SWAPFILE}"
   echo "   大小: ${REC_SWAP_SIZE}"
 else
-  echo "   模式: 调整已有 swap priority（不新建 swapfile）"
+  echo "   模式: 调整已有 swap 大小（不新建 swapfile）"
+  echo "   目标大小: ${REC_SWAP_SIZE}"
 fi
 echo "   磁盘类型: ${DISK_KIND}（优先级自动设置）"
 echo "   磁盘 swap priority: ${REC_DISK_PRIO}（自动）"
@@ -552,7 +553,11 @@ if [[ "$DO_SWAP" == "Y" ]]; then
   else
     echo "自定义 swap 方案："
     echo "  1) create  - 创建/启用 swapfile"
-    echo "  2) tune    - 仅调整已有 swap priority（不新建）"
+    if (( HAS_DISK_SWAP == 1 )); then
+      echo "  2) tune    - 调整已有 swap 大小（不新建）"
+    else
+      echo "  2) tune    - 调整已有 swap 大小（不新建）[当前不可用：未开启swap]"
+    fi
     echo "  3) off     - 关闭所有磁盘 swap（不建议，谨慎使用）"
     read -rp "请选择模式 (1/2/3) [${REC_SWAP_MODE}]: " SWAP_MODE
     SWAP_MODE=${SWAP_MODE:-$REC_SWAP_MODE}
@@ -560,7 +565,14 @@ if [[ "$DO_SWAP" == "Y" ]]; then
     # 兼容数字输入，增加健壮性
     case "$SWAP_MODE" in
       1|create|CREATE|Create) SWAP_MODE="create" ;;
-      2|tune|TUNE|Tune)       SWAP_MODE="tune" ;;
+      2|tune|TUNE|Tune)
+        if (( HAS_DISK_SWAP == 0 )); then
+          log_warn "当前系统无现有磁盘 swap，无法使用 tune 模式。自动切换为 create 模式。"
+          SWAP_MODE="create"
+        else
+          SWAP_MODE="tune"
+        fi
+        ;;
       3|off|OFF|Off)          SWAP_MODE="off" ;;
       *)
         log_warn "无效选择: $SWAP_MODE，将使用推荐模式: ${REC_SWAP_MODE}"
@@ -572,7 +584,7 @@ if [[ "$DO_SWAP" == "Y" ]]; then
     DISK_SWAP_PRIO="$REC_DISK_PRIO"
     log_info "磁盘 swap 优先级自动设置为: ${DISK_SWAP_PRIO}"
 
-    # 只要选择 create，就询问路径和大小（回车用默认）
+    # create 或 tune 模式都需要询问大小
     if [[ "$SWAP_MODE" == "create" ]]; then
       read -rp "swapfile 路径 [${REC_SWAPFILE}]: " SWAPFILE_PATH
       SWAPFILE_PATH=${SWAPFILE_PATH:-$REC_SWAPFILE}
@@ -604,6 +616,27 @@ if [[ "$DO_SWAP" == "Y" ]]; then
         SWAPFILE_SIZE="${safe_size}M"
         log_warn "可用空间不足，swapfile 大小调整为: ${SWAPFILE_SIZE}"
       fi
+    elif [[ "$SWAP_MODE" == "tune" ]]; then
+      # tune 模式：调整现有 swap 的大小
+      log_info "当前将调整现有 swap 的大小"
+      
+      read -rp "新的 swap 大小 (如 1G/2G/4096M) [${REC_SWAP_SIZE}]: " SWAPFILE_SIZE
+      SWAPFILE_SIZE=$(validate_swap_size "$SWAPFILE_SIZE" "$REC_SWAP_SIZE")
+      
+      # 检查用户输入的大小是否超过磁盘限制
+      USER_SIZE_MB=$(swap_size_to_mb "$SWAPFILE_SIZE")
+      if (( USER_SIZE_MB > MAX_SWAP_SIZE_MB )); then
+        log_warn "输入的 swap 大小 (${SWAPFILE_SIZE}) 超过磁盘限制，已调整为 ${MAX_SWAP_SIZE}"
+        SWAPFILE_SIZE="$MAX_SWAP_SIZE"
+      fi
+      
+      # 获取现有 swap 设备路径
+      SWAPFILE_PATH=$(echo "$DISK_SWAPS" | head -n1)
+      if [[ -z "$SWAPFILE_PATH" ]]; then
+        log_error "未找到现有 swap 设备"
+        exit 1
+      fi
+      log_info "将调整 swap: ${SWAPFILE_PATH}"
     fi
 
     SWAP_ACTION="apply"
@@ -736,18 +769,28 @@ if [[ "$CONFIG_MODE" == "all" || "$CONFIG_MODE" == "swap" ]] && [[ "$SWAP_ACTION
       if (( HAS_DISK_SWAP == 0 )); then
         log_warn "未检测到磁盘 swap，tune 模式无事可做。你可以改用 create 模式创建 swapfile。"
       else
-        log_info "调整所有磁盘 swap priority 为: $DISK_SWAP_PRIO（并写入 /etc/fstab 持久化）"
-        update_fstab_swap_pri_all "$DISK_SWAP_PRIO"
-
-        while read -r dev; do
-          [[ -z "$dev" ]] && continue
-          if [[ "$dev" =~ ^/dev/zram[0-9]+$ ]]; then
-            continue
-          fi
-          enable_swap_target "$dev" "$DISK_SWAP_PRIO" || true
-        done <<< "$DISK_SWAPS"
-
-        log_ok "已尝试应用 priority（如有 systemd/其他机制管理，重启后会更一致）"
+        log_info "调整现有 swap 大小为: $SWAPFILE_SIZE"
+        
+        # 关闭现有 swap
+        log_info "关闭现有 swap: ${SWAPFILE_PATH}"
+        swapoff "$SWAPFILE_PATH" || true
+        
+        # 删除旧的 swap 文件
+        if [[ -f "$SWAPFILE_PATH" ]]; then
+          log_info "删除旧 swap 文件"
+          rm -f "$SWAPFILE_PATH"
+        fi
+        
+        # 创建新的 swap 文件
+        create_swapfile "$SWAPFILE_PATH" "$SWAPFILE_SIZE"
+        
+        # 更新 fstab
+        ensure_fstab_swapfile "$SWAPFILE_PATH" "$DISK_SWAP_PRIO"
+        
+        # 启用新的 swap
+        enable_swap_target "$SWAPFILE_PATH" "$DISK_SWAP_PRIO"
+        
+        log_ok "已将 swap 大小调整为: ${SWAPFILE_SIZE}"
       fi
       ;;
 

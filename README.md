@@ -7,7 +7,7 @@
 
 ### 🚀 快速开始
 
-**交互式安装（推荐）：**
+**交互式安装(推荐):**
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Rain-kl/tunescipt/main/ram-tune.sh -o /tmp/ram-tune.sh && sudo bash /tmp/ram-tune.sh
 ```
