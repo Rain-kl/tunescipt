@@ -7,14 +7,19 @@
 
 ### 🚀 快速开始
 
-使用 curl：
+**交互式安装（推荐）：**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Rain-kl/tunescipt/main/ram-tune.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/Rain-kl/tunescipt/main/ram-tune.sh -o /tmp/ram-tune.sh && sudo bash /tmp/ram-tune.sh
 ```
 
-使用 wget：
+或使用 wget：
 ```bash
-wget -qO- https://raw.githubusercontent.com/Rain-kl/tunescipt/main/ram-tune.sh | sudo bash
+wget -qO /tmp/ram-tune.sh https://raw.githubusercontent.com/Rain-kl/tunescipt/main/ram-tune.sh && sudo bash /tmp/ram-tune.sh
+```
+
+**自动安装（使用默认配置）：**
+```bash
+curl -fsSL https://raw.githubusercontent.com/Rain-kl/tunescipt/main/ram-tune.sh | sudo bash
 ```
 
 ### 配置参数说明
