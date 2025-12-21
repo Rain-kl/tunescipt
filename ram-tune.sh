@@ -339,7 +339,22 @@ echo "  2) 仅配置 zram"
 echo "  3) 仅配置 swap"
 echo "======================================================="
 echo
-read -rp "请选择配置模式 [1/2/3，默认 1]: " CONFIG_MODE
+
+# 尝试从 /dev/tty 读取输入（支持 curl | bash 方式运行）
+if [ -t 0 ]; then
+  # 标准输入是终端
+  read -rp "请选择配置模式 [1/2/3，默认 1]: " CONFIG_MODE
+else
+  # 标准输入不是终端（如 curl | bash），尝试从 /dev/tty 读取
+  if [ -r /dev/tty ]; then
+    read -rp "请选择配置模式 [1/2/3，默认 1]: " CONFIG_MODE </dev/tty
+  else
+    # 无法读取输入，使用默认值
+    CONFIG_MODE="1"
+    log_info "自动使用默认配置模式（无交互式终端）"
+  fi
+fi
+
 CONFIG_MODE="${CONFIG_MODE:-1}"
 
 # 验证输入
@@ -348,7 +363,7 @@ case "$CONFIG_MODE" in
   2|zram|ZRAM|Zram)       CONFIG_MODE="zram" ;;
   3|swap|SWAP|Swap)       CONFIG_MODE="swap" ;;
   *)
-    log_warn "无效选择: $CONFIG_MODE，将使用默认模式: 一键优配置"
+    log_warn "无效选择: ${CONFIG_MODE}，将使用默认模式: 一键优配置"
     CONFIG_MODE="all"
     ;;
 esac
@@ -424,7 +439,14 @@ if [[ "$CONFIG_MODE" == "all" || "$CONFIG_MODE" == "zram" ]]; then
   echo "   swap-priority: ${REC_ZRAM_PRIO} (自动设置)"
   echo
 
-  read -rp "是否使用推荐 zram 配置? [Y/n] " USE_REC
+  if [ -t 0 ]; then
+    read -rp "是否使用推荐 zram 配置? [Y/n] " USE_REC
+  elif [ -r /dev/tty ]; then
+    read -rp "是否使用推荐 zram 配置? [Y/n] " USE_REC </dev/tty
+  else
+    USE_REC="Y"
+    log_info "使用推荐 zram 配置（无交互式终端）"
+  fi
   USE_REC=$(validate_yn "$USE_REC" "Y")
 
   if [[ "$USE_REC" == "Y" ]]; then
@@ -432,10 +454,17 @@ if [[ "$CONFIG_MODE" == "all" || "$CONFIG_MODE" == "zram" ]]; then
     COMP_ALGO="$REC_ALGO"
     ZRAM_PRIO="$REC_ZRAM_PRIO"
   else
-    read -rp "请输入 zram-size (如: ram / 2 或 1024M) [$REC_SIZE_EXPR]: " ZRAM_SIZE
+    if [ -t 0 ]; then
+      read -rp "请输入 zram-size (如: ram / 2 或 1024M) [$REC_SIZE_EXPR]: " ZRAM_SIZE
+      read -rp "请选择压缩算法 (lz4/zstd/lzo) [$REC_ALGO]: " COMP_ALGO
+    elif [ -r /dev/tty ]; then
+      read -rp "请输入 zram-size (如: ram / 2 或 1024M) [$REC_SIZE_EXPR]: " ZRAM_SIZE </dev/tty
+      read -rp "请选择压缩算法 (lz4/zstd/lzo) [$REC_ALGO]: " COMP_ALGO </dev/tty
+    else
+      ZRAM_SIZE="$REC_SIZE_EXPR"
+      COMP_ALGO="$REC_ALGO"
+    fi
     ZRAM_SIZE=${ZRAM_SIZE:-$REC_SIZE_EXPR}
-    
-    read -rp "请选择压缩算法 (lz4/zstd/lzo) [$REC_ALGO]: " COMP_ALGO
     COMP_ALGO=$(validate_algo "${COMP_ALGO:-$REC_ALGO}")
     
     # 优先级自动设置，不需要用户输入
@@ -534,7 +563,14 @@ echo "   磁盘类型: ${DISK_KIND}（优先级自动设置）"
 echo "   磁盘 swap priority: ${REC_DISK_PRIO}（自动）"
 echo
 
-read -rp "是否配置磁盘 swap? [Y/n] " DO_SWAP
+if [ -t 0 ]; then
+  read -rp "是否配置磁盘 swap? [Y/n] " DO_SWAP
+elif [ -r /dev/tty ]; then
+  read -rp "是否配置磁盘 swap? [Y/n] " DO_SWAP </dev/tty
+else
+  DO_SWAP="Y"
+  log_info "自动配置磁盘 swap（无交互式终端）"
+fi
 DO_SWAP=$(validate_yn "$DO_SWAP" "Y")
 
 SWAP_ACTION="skip"
@@ -544,7 +580,14 @@ SWAPFILE_SIZE="$REC_SWAP_SIZE"
 DISK_SWAP_PRIO="$REC_DISK_PRIO"
 
 if [[ "$DO_SWAP" == "Y" ]]; then
-  read -rp "是否使用推荐 swap 方案? [Y/n] " USE_SWAP_REC
+  if [ -t 0 ]; then
+    read -rp "是否使用推荐 swap 方案? [Y/n] " USE_SWAP_REC
+  elif [ -r /dev/tty ]; then
+    read -rp "是否使用推荐 swap 方案? [Y/n] " USE_SWAP_REC </dev/tty
+  else
+    USE_SWAP_REC="Y"
+    log_info "使用推荐 swap 方案（无交互式终端）"
+  fi
   USE_SWAP_REC=$(validate_yn "$USE_SWAP_REC" "Y")
 
   if [[ "$USE_SWAP_REC" == "Y" ]]; then
@@ -554,7 +597,13 @@ if [[ "$DO_SWAP" == "Y" ]]; then
     echo "  1) create  - 创建/启用 swapfile"
     echo "  2) tune    - 仅调整已有 swap priority（不新建）"
     echo "  3) off     - 关闭所有磁盘 swap（不建议，谨慎使用）"
-    read -rp "请选择模式 (1/2/3) [${REC_SWAP_MODE}]: " SWAP_MODE
+    if [ -t 0 ]; then
+      read -rp "请选择模式 (1/2/3) [${REC_SWAP_MODE}]: " SWAP_MODE
+    elif [ -r /dev/tty ]; then
+      read -rp "请选择模式 (1/2/3) [${REC_SWAP_MODE}]: " SWAP_MODE </dev/tty
+    else
+      SWAP_MODE="$REC_SWAP_MODE"
+    fi
     SWAP_MODE=${SWAP_MODE:-$REC_SWAP_MODE}
 
     # 兼容数字输入，增加健壮性
@@ -574,7 +623,13 @@ if [[ "$DO_SWAP" == "Y" ]]; then
 
     # 只要选择 create，就询问路径和大小（回车用默认）
     if [[ "$SWAP_MODE" == "create" ]]; then
-      read -rp "swapfile 路径 [${REC_SWAPFILE}]: " SWAPFILE_PATH
+      if [ -t 0 ]; then
+        read -rp "swapfile 路径 [${REC_SWAPFILE}]: " SWAPFILE_PATH
+      elif [ -r /dev/tty ]; then
+        read -rp "swapfile 路径 [${REC_SWAPFILE}]: " SWAPFILE_PATH </dev/tty
+      else
+        SWAPFILE_PATH="$REC_SWAPFILE"
+      fi
       SWAPFILE_PATH=${SWAPFILE_PATH:-$REC_SWAPFILE}
       
       # 验证路径格式
@@ -583,7 +638,13 @@ if [[ "$DO_SWAP" == "Y" ]]; then
         SWAPFILE_PATH="$REC_SWAPFILE"
       fi
 
-      read -rp "swapfile 大小 (如 1G/2G/4096M) [${REC_SWAP_SIZE}]: " SWAPFILE_SIZE
+      if [ -t 0 ]; then
+        read -rp "swapfile 大小 (如 1G/2G/4096M) [${REC_SWAP_SIZE}]: " SWAPFILE_SIZE
+      elif [ -r /dev/tty ]; then
+        read -rp "swapfile 大小 (如 1G/2G/4096M) [${REC_SWAP_SIZE}]: " SWAPFILE_SIZE </dev/tty
+      else
+        SWAPFILE_SIZE="$REC_SWAP_SIZE"
+      fi
       SWAPFILE_SIZE=$(validate_swap_size "$SWAPFILE_SIZE" "$REC_SWAP_SIZE")
       
       # 检查用户输入的大小是否超过磁盘限制
@@ -626,21 +687,42 @@ echo "   vm.swappiness = ${REC_SWAPPINESS}"
 echo "   vm.page-cluster = ${REC_PAGE_CLUSTER}"
 echo
 
-read -rp "是否应用 sysctl 推荐/自定义配置? [y/N] " DO_SYSCTL
+if [ -t 0 ]; then
+  read -rp "是否应用 sysctl 推荐/自定义配置? [y/N] " DO_SYSCTL
+elif [ -r /dev/tty ]; then
+  read -rp "是否应用 sysctl 推荐/自定义配置? [y/N] " DO_SYSCTL </dev/tty
+else
+  DO_SYSCTL="N"
+  log_info "跳过 sysctl 配置（无交互式终端）"
+fi
 DO_SYSCTL=$(validate_yn "$DO_SYSCTL" "N")
 
 SYS_SWAPPINESS="$REC_SWAPPINESS"
 SYS_PAGE_CLUSTER="$REC_PAGE_CLUSTER"
 
 if [[ "$DO_SYSCTL" == "Y" ]]; then
-  read -rp "是否使用推荐 sysctl 配置? [Y/n] " USE_SYSCTL_REC
+  if [ -t 0 ]; then
+    read -rp "是否使用推荐 sysctl 配置? [Y/n] " USE_SYSCTL_REC
+  elif [ -r /dev/tty ]; then
+    read -rp "是否使用推荐 sysctl 配置? [Y/n] " USE_SYSCTL_REC </dev/tty
+  else
+    USE_SYSCTL_REC="Y"
+  fi
   USE_SYSCTL_REC=$(validate_yn "$USE_SYSCTL_REC" "Y")
   if [[ "$USE_SYSCTL_REC" == "Y" ]]; then
     SYSCTL_ACTION="apply"
   else
-    read -rp "vm.swappiness (0-200) [${REC_SWAPPINESS}]: " SYS_SWAPPINESS
+    if [ -t 0 ]; then
+      read -rp "vm.swappiness (0-200) [${REC_SWAPPINESS}]: " SYS_SWAPPINESS
+      read -rp "vm.page-cluster (0-9) [${REC_PAGE_CLUSTER}]: " SYS_PAGE_CLUSTER
+    elif [ -r /dev/tty ]; then
+      read -rp "vm.swappiness (0-200) [${REC_SWAPPINESS}]: " SYS_SWAPPINESS </dev/tty
+      read -rp "vm.page-cluster (0-9) [${REC_PAGE_CLUSTER}]: " SYS_PAGE_CLUSTER </dev/tty
+    else
+      SYS_SWAPPINESS="$REC_SWAPPINESS"
+      SYS_PAGE_CLUSTER="$REC_PAGE_CLUSTER"
+    fi
     SYS_SWAPPINESS=$(validate_number "$SYS_SWAPPINESS" 0 200 "$REC_SWAPPINESS")
-    read -rp "vm.page-cluster (0-9) [${REC_PAGE_CLUSTER}]: " SYS_PAGE_CLUSTER
     SYS_PAGE_CLUSTER=$(validate_number "$SYS_PAGE_CLUSTER" 0 9 "$REC_PAGE_CLUSTER")
     SYSCTL_ACTION="apply"
   fi
@@ -692,7 +774,14 @@ fi
 echo "=================================================="
 
 echo
-read -rp "确认应用以上配置? [Y/n] " CONFIRM
+if [ -t 0 ]; then
+  read -rp "确认应用以上配置? [Y/n] " CONFIRM
+elif [ -r /dev/tty ]; then
+  read -rp "确认应用以上配置? [Y/n] " CONFIRM </dev/tty
+else
+  CONFIRM="Y"
+  log_info "自动确认应用配置（无交互式终端）"
+fi
 CONFIRM=$(validate_yn "$CONFIRM" "Y")
 [[ "$CONFIRM" == "Y" ]] || { log_info "已取消操作"; exit 0; }
 
