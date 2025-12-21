@@ -602,13 +602,6 @@ if [[ "$DO_SWAP" == "Y" ]]; then
       read -rp "swapfile 大小 (如 1G/2G/4096M) [${REC_SWAP_SIZE}]: " SWAPFILE_SIZE
       SWAPFILE_SIZE=$(validate_swap_size "$SWAPFILE_SIZE" "$REC_SWAP_SIZE")
       
-      # 检查用户输入的大小是否超过磁盘限制
-      USER_SIZE_MB=$(swap_size_to_mb "$SWAPFILE_SIZE")
-      if (( USER_SIZE_MB > MAX_SWAP_SIZE_MB )); then
-        log_warn "输入的 swap 大小 (${SWAPFILE_SIZE}) 超过磁盘限制，已调整为 ${MAX_SWAP_SIZE}"
-        SWAPFILE_SIZE="$MAX_SWAP_SIZE"
-      fi
-      
       # 检查可用空间
       SWAPFILE_SIZE_MB=$(swap_size_to_mb "$SWAPFILE_SIZE")
       if (( SWAPFILE_SIZE_MB > ROOT_FREE_MB - 512 )); then
@@ -626,13 +619,6 @@ if [[ "$DO_SWAP" == "Y" ]]; then
       
       read -rp "新的 swap 大小 (如 1G/2G/4096M) [${REC_SWAP_SIZE}]: " SWAPFILE_SIZE
       SWAPFILE_SIZE=$(validate_swap_size "$SWAPFILE_SIZE" "$REC_SWAP_SIZE")
-      
-      # 检查用户输入的大小是否超过磁盘限制
-      USER_SIZE_MB=$(swap_size_to_mb "$SWAPFILE_SIZE")
-      if (( USER_SIZE_MB > MAX_SWAP_SIZE_MB )); then
-        log_warn "输入的 swap 大小 (${SWAPFILE_SIZE}) 超过磁盘限制，已调整为 ${MAX_SWAP_SIZE}"
-        SWAPFILE_SIZE="$MAX_SWAP_SIZE"
-      fi
       
       # 获取现有 swap 设备路径
       SWAPFILE_PATH=$(echo "$DISK_SWAPS" | head -n1)
