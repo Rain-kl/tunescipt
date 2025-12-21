@@ -43,5 +43,5 @@ HDD 磁盘: 优先级较高（30-50），均衡使用两者
 
 **curl安装:**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Rain-kl/tunescipt/main/socks5.sh -o /tmp/socks5.sh && sudo bash /tmp/ram-tune.sh
+curl -fsSL https://raw.githubusercontent.com/Rain-kl/tunescipt/main/socks5.sh -o /tmp/socks5.sh && sudo bash /tmp/socks5.sh
 ```
