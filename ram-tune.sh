@@ -119,7 +119,11 @@ fi
 RAM_MB=$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo)
 CORES=$(nproc 2>/dev/null || echo 1)
 
-DISK_SWAPS="$(swapon --noheadings --raw --output=NAME 2>/dev/null | grep -vE '^/dev/zram[0-9]+$' || true)"
+DISK_SWAPS="$(
+  { swapon --noheadings --show=NAME 2>/dev/null \
+    || swapon -s 2>/dev/null | awk 'NR>1{print $1}'; } |
+  grep -vE '^/dev/zram[0-9]+$' || true
+)"
 HAS_DISK_SWAP=0
 [[ -n "${DISK_SWAPS}" ]] && HAS_DISK_SWAP=1
 
