@@ -2,15 +2,117 @@
 set -euo pipefail
 
 # =========================
+# 颜色和日志函数
+# =========================
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+log_info()  { echo -e "${BLUE}ℹ️  $*${NC}"; }
+log_ok()    { echo -e "${GREEN}✅ $*${NC}"; }
+log_warn()  { echo -e "${YELLOW}⚠️  $*${NC}"; }
+log_error() { echo -e "${RED}❌ $*${NC}"; }
+
+# =========================
+# 输入验证函数
+# =========================
+# 验证 Y/N 输入，返回标准化结果
+validate_yn() {
+  local input="$1"
+  local default="${2:-Y}"
+  input="${input:-$default}"
+  input="$(echo "$input" | tr '[:lower:]' '[:upper:]')"
+  case "$input" in
+    Y|YES) echo "Y" ;;
+    N|NO)  echo "N" ;;
+    *)     echo "$default" ;;
+  esac
+}
+
+# 验证数字范围
+validate_number() {
+  local input="$1"
+  local min="$2"
+  local max="$3"
+  local default="$4"
+  
+  # 去除空白
+  input="${input//[[:space:]]/}"
+  
+  # 如果为空，使用默认值
+  [[ -z "$input" ]] && { echo "$default"; return 0; }
+  
+  # 检查是否为数字
+  if ! [[ "$input" =~ ^[0-9]+$ ]]; then
+    echo "$default"
+    return 0
+  fi
+  
+  # 范围检查
+  if (( input < min )); then
+    echo "$min"
+  elif (( input > max )); then
+    echo "$max"
+  else
+    echo "$input"
+  fi
+}
+
+# 验证压缩算法
+validate_algo() {
+  local input="$1"
+  input="$(echo "$input" | tr '[:upper:]' '[:lower:]')"
+  case "$input" in
+    lz4|zstd|lzo) echo "$input" ;;
+    *) echo "lz4" ;;  # 默认使用 lz4
+  esac
+}
+
+# 验证 swap 大小格式（如 1G, 2G, 1024M）
+validate_swap_size() {
+  local input="$1"
+  local default="$2"
+  
+  input="${input//[[:space:]]/}"
+  [[ -z "$input" ]] && { echo "$default"; return 0; }
+  
+  # 支持 G 和 M 后缀
+  if [[ "$input" =~ ^[0-9]+[GgMm]$ ]]; then
+    echo "$input" | tr '[:lower:]' '[:upper:]'
+  elif [[ "$input" =~ ^[0-9]+$ ]]; then
+    # 纯数字默认为 MB
+    echo "${input}M"
+  else
+    echo "$default"
+  fi
+}
+
+# 将 swap 大小转换为 MB
+swap_size_to_mb() {
+  local size="$1"
+  local num="${size%[GgMm]}"
+  local suffix="${size: -1}"
+  suffix="$(echo "$suffix" | tr '[:lower:]' '[:upper:]')"
+  
+  case "$suffix" in
+    G) echo $(( num * 1024 )) ;;
+    M) echo "$num" ;;
+    *) echo "$num" ;;
+  esac
+}
+
+# =========================
 # 基础检查
 # =========================
 if ! grep -qiE 'debian|ubuntu' /etc/os-release; then
-  echo "❌ 此脚本仅支持 Debian / Ubuntu 系"
+  log_error "此脚本仅支持 Debian / Ubuntu 系"
   exit 1
 fi
 
 if [[ ${EUID:-$(id -u)} -ne 0 ]]; then
-  echo "❌ 请使用 root 或 sudo 运行"
+  log_error "请使用 root 或 sudo 运行"
   exit 1
 fi
 
@@ -28,7 +130,7 @@ backup_file() {
   local f="$1"
   [[ -f "$f" ]] || return 0
   cp -a "$f" "${f}.bak.$(date +%Y%m%d%H%M%S)"
-  echo "🧷 已备份: ${f}.bak.*"
+  log_info "已备份: ${f}.bak.*"
 }
 
 # 找到根分区底层物理磁盘（尽量）
@@ -86,6 +188,46 @@ root_free_mb() {
   df -BM / | awk 'NR==2{gsub(/M/,"",$4); print int($4)}'
 }
 
+# 获取根分区所在磁盘的总大小（MB）
+root_disk_size_mb() {
+  local disk="$1"
+  local size_bytes size_mb
+  
+  # 如果磁盘名为空，尝试从根分区获取
+  if [[ -z "$disk" ]]; then
+    disk="$(root_base_disk)"
+  fi
+  
+  [[ -z "$disk" ]] && { echo "0"; return 0; }
+  
+  # 尝试从 /sys/block 获取大小（以 512 字节扇区为单位）
+  local size_file="/sys/block/${disk}/size"
+  if [[ -f "$size_file" ]]; then
+    local sectors
+    sectors=$(cat "$size_file" 2>/dev/null || echo 0)
+    size_mb=$(( sectors * 512 / 1024 / 1024 ))
+    echo "$size_mb"
+    return 0
+  fi
+  
+  # 备用方案：使用 lsblk
+  size_bytes=$(lsblk -bno SIZE "/dev/${disk}" 2>/dev/null | head -n1 || echo 0)
+  if [[ -n "$size_bytes" && "$size_bytes" -gt 0 ]]; then
+    size_mb=$(( size_bytes / 1024 / 1024 ))
+    echo "$size_mb"
+    return 0
+  fi
+  
+  echo "0"
+}
+
+# 获取根分区所在磁盘的总大小（GB）
+root_disk_size_gb() {
+  local mb
+  mb=$(root_disk_size_mb "$1")
+  echo $(( mb / 1024 ))
+}
+
 update_fstab_swap_pri_all() {
   local pri="$1"
   local fstab="/etc/fstab"
@@ -137,19 +279,19 @@ create_swapfile() {
 
   if [[ -e "$path" ]]; then
     if file -b "$path" 2>/dev/null | grep -qi 'swap file'; then
-      echo "ℹ️ 已存在 swapfile: $path（将直接复用）"
+      log_info "已存在 swapfile: $path（将直接复用）"
       return 0
     fi
-    echo "❌ 路径已存在但不是 swapfile: $path"
-    echo "   为安全起见，不会覆盖。请换个路径，或手动处理后重试。"
+    log_error "路径已存在但不是 swapfile: $path"
+    log_error "为安全起见，不会覆盖。请换个路径，或手动处理后重试。"
     exit 1
   fi
 
-  echo "🧱 创建 swapfile: $path (大小: $size)"
+  log_info "创建 swapfile: $path (大小: $size)"
   if command -v fallocate >/dev/null 2>&1; then
     fallocate -l "$size" "$path"
   else
-    echo "⚠️ 系统无 fallocate，建议你用形如 2048M/2G 的大小。"
+    log_warn "系统无 fallocate，使用 dd 创建..."
     dd if=/dev/zero of="$path" bs=1M count=0 seek="$size" status=none
   fi
 
@@ -176,14 +318,46 @@ vm.swappiness = $1
 vm.page-cluster = $2
 EOF
   sysctl --system >/dev/null || true
-  echo "✅ 已写入并尝试应用 sysctl: $file"
+  log_ok "已写入并应用 sysctl: $file"
 }
 
 # =========================
-# 额外信息：磁盘类型
+# 额外信息：磁盘类型和大小
 # =========================
 BASE_DISK="$(root_base_disk)"
 DISK_KIND="$(disk_is_rotational "$BASE_DISK")"  # ssd/hdd/unknown
+DISK_SIZE_GB=$(root_disk_size_gb "$BASE_DISK")
+DISK_SIZE_MB=$(root_disk_size_mb "$BASE_DISK")
+
+# =========================
+# 配置模式选择
+# =========================
+echo
+echo "==================== 配置模式选择 ===================="
+echo "  1) 一键配置"
+echo "  2) 仅配置 zram"
+echo "  3) 仅配置 swap"
+echo "======================================================="
+echo
+read -rp "请选择配置模式 [1/2/3，默认 1]: " CONFIG_MODE
+CONFIG_MODE="${CONFIG_MODE:-1}"
+
+# 验证输入
+case "$CONFIG_MODE" in
+  1|一键|all|ALL|All)     CONFIG_MODE="all" ;;
+  2|zram|ZRAM|Zram)       CONFIG_MODE="zram" ;;
+  3|swap|SWAP|Swap)       CONFIG_MODE="swap" ;;
+  *)
+    log_warn "无效选择: $CONFIG_MODE，将使用默认模式: 一键优配置"
+    CONFIG_MODE="all"
+    ;;
+esac
+
+case "$CONFIG_MODE" in
+  all)  log_info "已选择: 一键优配置（zram + swap）" ;;
+  zram) log_info "已选择: 仅配置 zram" ;;
+  swap) log_info "已选择: 仅配置 swap" ;;
+esac
 
 # =========================
 # 1) zram 推荐配置
@@ -214,54 +388,87 @@ fi
 
 REC_ZRAM_MB=$(( RAM_MB * REC_NUM / REC_DEN ))
 
+echo
+echo "==================== 系统信息 ===================="
 echo "🧠 物理内存: ${RAM_MB} MB"
 echo "🧮 CPU 核心数: ${CORES}"
 if [[ -n "$BASE_DISK" ]]; then
-  echo "💾 根分区磁盘: ${BASE_DISK}（推断类型: ${DISK_KIND}）"
+  echo "💾 根分区磁盘: ${BASE_DISK}（类型: ${DISK_KIND}，大小: ${DISK_SIZE_GB}G）"
 else
-  echo "💾 根分区磁盘: 未能确定（推断类型: unknown）"
+  echo "💾 根分区磁盘: 未能确定（类型: unknown）"
 fi
 echo "💽 磁盘 swap: $([[ $HAS_DISK_SWAP -eq 1 ]] && echo '已存在' || echo '不存在')"
-echo
-echo "👉 推荐 zram 配置:"
-echo "   zram-size: ${REC_SIZE_EXPR} (约 ${REC_ZRAM_MB} MB)"
-echo "   compression-algorithm: ${REC_ALGO}"
-echo "   swap-priority: ${REC_ZRAM_PRIO}"
-echo
+echo "=================================================="
 
-read -rp "是否使用推荐 zram 配置? [Y/n] " USE_REC
-USE_REC=${USE_REC:-Y}
+# 初始化变量（避免未定义错误）
+ZRAM_SIZE=""
+COMP_ALGO=""
+ZRAM_PRIO=""
+SWAP_ACTION="skip"
+SWAP_MODE=""
+SWAPFILE_PATH=""
+SWAPFILE_SIZE=""
+DISK_SWAP_PRIO=""
+SYSCTL_ACTION="skip"
+SYS_SWAPPINESS=""
+SYS_PAGE_CLUSTER=""
 
-if [[ "$USE_REC" =~ ^[Yy]$ ]]; then
-  ZRAM_SIZE="$REC_SIZE_EXPR"
-  COMP_ALGO="$REC_ALGO"
-  ZRAM_PRIO="$REC_ZRAM_PRIO"
-else
-  read -rp "请输入 zram-size (如: ram / 2 或 1024M): " ZRAM_SIZE
-  read -rp "请选择压缩算法 (lz4/zstd/lzo): " COMP_ALGO
-  read -rp "设置 zram swap 优先级? (默认 ${REC_ZRAM_PRIO}) [${REC_ZRAM_PRIO}]: " ZRAM_PRIO
-  ZRAM_PRIO=${ZRAM_PRIO:-$REC_ZRAM_PRIO}
+# =========================
+# zram 配置（仅在 all 或 zram 模式下执行）
+# =========================
+if [[ "$CONFIG_MODE" == "all" || "$CONFIG_MODE" == "zram" ]]; then
+  echo
+  echo "👉 推荐 zram 配置:"
+  echo "   zram-size: ${REC_SIZE_EXPR} (约 ${REC_ZRAM_MB} MB)"
+  echo "   compression-algorithm: ${REC_ALGO}"
+  echo "   swap-priority: ${REC_ZRAM_PRIO} (自动设置)"
+  echo
+
+  read -rp "是否使用推荐 zram 配置? [Y/n] " USE_REC
+  USE_REC=$(validate_yn "$USE_REC" "Y")
+
+  if [[ "$USE_REC" == "Y" ]]; then
+    ZRAM_SIZE="$REC_SIZE_EXPR"
+    COMP_ALGO="$REC_ALGO"
+    ZRAM_PRIO="$REC_ZRAM_PRIO"
+  else
+    read -rp "请输入 zram-size (如: ram / 2 或 1024M) [$REC_SIZE_EXPR]: " ZRAM_SIZE
+    ZRAM_SIZE=${ZRAM_SIZE:-$REC_SIZE_EXPR}
+    
+    read -rp "请选择压缩算法 (lz4/zstd/lzo) [$REC_ALGO]: " COMP_ALGO
+    COMP_ALGO=$(validate_algo "${COMP_ALGO:-$REC_ALGO}")
+    
+    # 优先级自动设置，不需要用户输入
+    ZRAM_PRIO="$REC_ZRAM_PRIO"
+    log_info "zram swap 优先级自动设置为: ${ZRAM_PRIO}"
+  fi
+
+  log_ok "压缩算法: $COMP_ALGO"
 fi
-
-case "$COMP_ALGO" in
-  lz4|zstd|lzo) ;;
-  *) echo "❌ 不支持的压缩算法: $COMP_ALGO"; exit 1 ;;
-esac
 
 # =========================
 # 2) 磁盘 swap 推荐配置（含 SSD/HDD 智能）
 # =========================
-echo
-echo "👉 磁盘 swap 配置（swapfile / 现有 swap 分区/文件）"
+# 仅在 all 或 swap 模式下执行
+if [[ "$CONFIG_MODE" == "all" || "$CONFIG_MODE" == "swap" ]]; then
+  echo
+  echo "👉 磁盘 swap 配置（swapfile / 现有 swap 分区/文件）"
 
-REC_SWAP_ENABLE="Y"
-if (( HAS_DISK_SWAP == 1 )); then
-  REC_SWAP_MODE="tune"
-else
-  REC_SWAP_MODE="create"
+  REC_SWAP_ENABLE="Y"
+  if (( HAS_DISK_SWAP == 1 )); then
+    REC_SWAP_MODE="tune"
+  else
+    REC_SWAP_MODE="create"
 fi
 
 # 推荐 swapfile 大小（保守，zram 负责主要压力；磁盘 swap 做兜底）
+# 重要：如果磁盘大小 <= 10G，swap 不能超过 1G
+MAX_SWAP_SIZE="8G"
+if (( DISK_SIZE_GB <= 10 )); then
+  MAX_SWAP_SIZE="1G"
+  log_warn "磁盘空间较小（${DISK_SIZE_GB}G），swap 大小限制为最大 1G"
+fi
+
 if (( RAM_MB <= 2048 )); then
   REC_SWAP_SIZE="2G"
 elif (( RAM_MB <= 4096 )); then
@@ -274,8 +481,16 @@ else
   REC_SWAP_SIZE="8G"
 fi
 
+# 根据磁盘大小限制调整推荐 swap 大小
+REC_SWAP_SIZE_MB=$(swap_size_to_mb "$REC_SWAP_SIZE")
+MAX_SWAP_SIZE_MB=$(swap_size_to_mb "$MAX_SWAP_SIZE")
+if (( REC_SWAP_SIZE_MB > MAX_SWAP_SIZE_MB )); then
+  REC_SWAP_SIZE="$MAX_SWAP_SIZE"
+  log_info "swap 大小已调整为 ${REC_SWAP_SIZE}（受磁盘大小限制）"
+fi
+
 # 推荐磁盘 swap priority（低于 zram；HDD 更低，SSD 可稍高）
-# 仍保证 < zram priority
+# 优先级完全自动计算，无需用户干预
 if [[ "$DISK_KIND" == "hdd" ]]; then
   REC_DISK_PRIO=10
 elif [[ "$DISK_KIND" == "ssd" ]]; then
@@ -302,7 +517,7 @@ if [[ "$REC_SWAP_MODE" == "create" ]]; then
     *) need_mb=0;;
   esac
   if (( need_mb > 0 && ROOT_FREE_MB < need_mb + 512 )); then
-    echo "⚠️ 根分区可用空间约 ${ROOT_FREE_MB}MB，偏紧；推荐 swapfile 大小降为 1G"
+    log_warn "根分区可用空间约 ${ROOT_FREE_MB}MB，偏紧；推荐 swapfile 大小降为 1G"
     REC_SWAP_SIZE="1G"
   fi
 fi
@@ -315,12 +530,12 @@ if [[ "$REC_SWAP_MODE" == "create" ]]; then
 else
   echo "   模式: 调整已有 swap priority（不新建 swapfile）"
 fi
-echo "   磁盘类型推断: ${DISK_KIND}（HDD 会更低 priority 以减少写盘）"
-echo "   磁盘 swap priority: ${REC_DISK_PRIO}"
+echo "   磁盘类型: ${DISK_KIND}（优先级自动设置）"
+echo "   磁盘 swap priority: ${REC_DISK_PRIO}（自动）"
 echo
 
 read -rp "是否配置磁盘 swap? [Y/n] " DO_SWAP
-DO_SWAP=${DO_SWAP:-Y}
+DO_SWAP=$(validate_yn "$DO_SWAP" "Y")
 
 SWAP_ACTION="skip"
 SWAP_MODE="$REC_SWAP_MODE"
@@ -328,50 +543,78 @@ SWAPFILE_PATH="$REC_SWAPFILE"
 SWAPFILE_SIZE="$REC_SWAP_SIZE"
 DISK_SWAP_PRIO="$REC_DISK_PRIO"
 
-if [[ "$DO_SWAP" =~ ^[Yy]$ ]]; then
+if [[ "$DO_SWAP" == "Y" ]]; then
   read -rp "是否使用推荐 swap 方案? [Y/n] " USE_SWAP_REC
-  USE_SWAP_REC=${USE_SWAP_REC:-Y}
+  USE_SWAP_REC=$(validate_yn "$USE_SWAP_REC" "Y")
 
-  if [[ "$USE_SWAP_REC" =~ ^[Yy]$ ]]; then
+  if [[ "$USE_SWAP_REC" == "Y" ]]; then
     SWAP_ACTION="apply"
   else
-        echo "自定义 swap 方案："
+    echo "自定义 swap 方案："
     echo "  1) create  - 创建/启用 swapfile"
     echo "  2) tune    - 仅调整已有 swap priority（不新建）"
     echo "  3) off     - 关闭所有磁盘 swap（不建议，谨慎使用）"
-    read -rp "请选择模式 (1/2/3 或 create/tune/off) [${REC_SWAP_MODE}]: " SWAP_MODE
+    read -rp "请选择模式 (1/2/3) [${REC_SWAP_MODE}]: " SWAP_MODE
     SWAP_MODE=${SWAP_MODE:-$REC_SWAP_MODE}
 
-    # 兼容数字输入
+    # 兼容数字输入，增加健壮性
     case "$SWAP_MODE" in
-      1|create) SWAP_MODE="create" ;;
-      2|tune)   SWAP_MODE="tune" ;;
-      3|off)    SWAP_MODE="off" ;;
+      1|create|CREATE|Create) SWAP_MODE="create" ;;
+      2|tune|TUNE|Tune)       SWAP_MODE="tune" ;;
+      3|off|OFF|Off)          SWAP_MODE="off" ;;
       *)
-        echo "❌ 无效选择: $SWAP_MODE（请输入 1/2/3 或 create/tune/off）"
-        exit 1
+        log_warn "无效选择: $SWAP_MODE，将使用推荐模式: ${REC_SWAP_MODE}"
+        SWAP_MODE="$REC_SWAP_MODE"
         ;;
     esac
 
-    read -rp "磁盘 swap priority (建议低于 zram) [${REC_DISK_PRIO}]: " DISK_SWAP_PRIO
-    DISK_SWAP_PRIO=${DISK_SWAP_PRIO:-$REC_DISK_PRIO}
+    # 优先级自动设置，不需要用户输入
+    DISK_SWAP_PRIO="$REC_DISK_PRIO"
+    log_info "磁盘 swap 优先级自动设置为: ${DISK_SWAP_PRIO}"
 
-    # 只要选择 create，就一定询问路径和大小（回车用默认）
+    # 只要选择 create，就询问路径和大小（回车用默认）
     if [[ "$SWAP_MODE" == "create" ]]; then
       read -rp "swapfile 路径 [${REC_SWAPFILE}]: " SWAPFILE_PATH
       SWAPFILE_PATH=${SWAPFILE_PATH:-$REC_SWAPFILE}
+      
+      # 验证路径格式
+      if [[ ! "$SWAPFILE_PATH" =~ ^/ ]]; then
+        log_warn "路径必须是绝对路径，使用默认路径: ${REC_SWAPFILE}"
+        SWAPFILE_PATH="$REC_SWAPFILE"
+      fi
 
       read -rp "swapfile 大小 (如 1G/2G/4096M) [${REC_SWAP_SIZE}]: " SWAPFILE_SIZE
-      SWAPFILE_SIZE=${SWAPFILE_SIZE:-$REC_SWAP_SIZE}
+      SWAPFILE_SIZE=$(validate_swap_size "$SWAPFILE_SIZE" "$REC_SWAP_SIZE")
+      
+      # 检查用户输入的大小是否超过磁盘限制
+      USER_SIZE_MB=$(swap_size_to_mb "$SWAPFILE_SIZE")
+      if (( USER_SIZE_MB > MAX_SWAP_SIZE_MB )); then
+        log_warn "输入的 swap 大小 (${SWAPFILE_SIZE}) 超过磁盘限制，已调整为 ${MAX_SWAP_SIZE}"
+        SWAPFILE_SIZE="$MAX_SWAP_SIZE"
+      fi
+      
+      # 检查可用空间
+      SWAPFILE_SIZE_MB=$(swap_size_to_mb "$SWAPFILE_SIZE")
+      if (( SWAPFILE_SIZE_MB > ROOT_FREE_MB - 512 )); then
+        local safe_size=$(( ROOT_FREE_MB - 512 ))
+        if (( safe_size < 512 )); then
+          log_error "磁盘可用空间不足，无法创建 swapfile"
+          exit 1
+        fi
+        SWAPFILE_SIZE="${safe_size}M"
+        log_warn "可用空间不足，swapfile 大小调整为: ${SWAPFILE_SIZE}"
+      fi
     fi
 
     SWAP_ACTION="apply"
   fi
 fi
+fi  # 结束 swap 配置条件块
 
 # =========================
 # 3) sysctl 调优（推荐/自定义，可选）
 # =========================
+# sysctl 配置在所有模式下都可用
 echo
 echo "👉 sysctl 调优（可选，用于配合 zram+swap）"
 # 推荐值：zram 场景下 swappiness 通常提高；page-cluster 设 0 减少 swap readahead（对 zram/SSD 更友好）
@@ -384,22 +627,21 @@ echo "   vm.page-cluster = ${REC_PAGE_CLUSTER}"
 echo
 
 read -rp "是否应用 sysctl 推荐/自定义配置? [y/N] " DO_SYSCTL
-DO_SYSCTL=${DO_SYSCTL:-N}
+DO_SYSCTL=$(validate_yn "$DO_SYSCTL" "N")
 
-SYSCTL_ACTION="skip"
 SYS_SWAPPINESS="$REC_SWAPPINESS"
 SYS_PAGE_CLUSTER="$REC_PAGE_CLUSTER"
 
-if [[ "$DO_SYSCTL" =~ ^[Yy]$ ]]; then
+if [[ "$DO_SYSCTL" == "Y" ]]; then
   read -rp "是否使用推荐 sysctl 配置? [Y/n] " USE_SYSCTL_REC
-  USE_SYSCTL_REC=${USE_SYSCTL_REC:-Y}
-  if [[ "$USE_SYSCTL_REC" =~ ^[Yy]$ ]]; then
+  USE_SYSCTL_REC=$(validate_yn "$USE_SYSCTL_REC" "Y")
+  if [[ "$USE_SYSCTL_REC" == "Y" ]]; then
     SYSCTL_ACTION="apply"
   else
     read -rp "vm.swappiness (0-200) [${REC_SWAPPINESS}]: " SYS_SWAPPINESS
-    SYS_SWAPPINESS=${SYS_SWAPPINESS:-$REC_SWAPPINESS}
-    read -rp "vm.page-cluster (0-3 常用) [${REC_PAGE_CLUSTER}]: " SYS_PAGE_CLUSTER
-    SYS_PAGE_CLUSTER=${SYS_PAGE_CLUSTER:-$REC_PAGE_CLUSTER}
+    SYS_SWAPPINESS=$(validate_number "$SYS_SWAPPINESS" 0 200 "$REC_SWAPPINESS")
+    read -rp "vm.page-cluster (0-9) [${REC_PAGE_CLUSTER}]: " SYS_PAGE_CLUSTER
+    SYS_PAGE_CLUSTER=$(validate_number "$SYS_PAGE_CLUSTER" 0 9 "$REC_PAGE_CLUSTER")
     SYSCTL_ACTION="apply"
   fi
 fi
@@ -408,22 +650,31 @@ fi
 # 最终确认
 # =========================
 echo
-echo "📄 最终配置:"
-echo "----- zram -----"
-cat <<EOF
+echo "==================== 最终配置 ===================="
+
+# zram 配置显示
+if [[ "$CONFIG_MODE" == "all" || "$CONFIG_MODE" == "zram" ]]; then
+  echo "----- zram -----"
+  cat <<EOF
 [zram0]
 zram-size = $ZRAM_SIZE
 compression-algorithm = $COMP_ALGO
 swap-priority = $ZRAM_PRIO
 EOF
+else
+  echo "----- zram -----"
+  echo "（跳过 zram 配置）"
+fi
 
 echo
 echo "----- disk swap -----"
-if [[ "$SWAP_ACTION" == "skip" ]]; then
+if [[ "$CONFIG_MODE" == "zram" ]]; then
+  echo "（跳过 swap 配置）"
+elif [[ "$SWAP_ACTION" == "skip" ]]; then
   echo "不配置磁盘 swap"
 else
   echo "模式: $SWAP_MODE"
-  echo "磁盘 swap priority: $DISK_SWAP_PRIO"
+  echo "磁盘 swap priority: $DISK_SWAP_PRIO (自动)"
   if [[ "$SWAP_MODE" == "create" ]]; then
     echo "swapfile: $SWAPFILE_PATH"
     echo "swapfile 大小: $SWAPFILE_SIZE"
@@ -438,51 +689,54 @@ else
   echo "vm.swappiness = $SYS_SWAPPINESS"
   echo "vm.page-cluster = $SYS_PAGE_CLUSTER"
 fi
+echo "=================================================="
 
 echo
 read -rp "确认应用以上配置? [Y/n] " CONFIRM
-CONFIRM=${CONFIRM:-Y}
-[[ "$CONFIRM" =~ ^[Yy]$ ]] || exit 0
+CONFIRM=$(validate_yn "$CONFIRM" "Y")
+[[ "$CONFIRM" == "Y" ]] || { log_info "已取消操作"; exit 0; }
 
 # =========================
 # 应用 zram 配置
 # =========================
-echo "📦 安装 systemd-zram-generator..."
-apt update
-apt install -y systemd-zram-generator
+if [[ "$CONFIG_MODE" == "all" || "$CONFIG_MODE" == "zram" ]]; then
+  log_info "安装 systemd-zram-generator..."
+  apt update -qq
+  apt install -y systemd-zram-generator
 
-CONF_FILE="/etc/systemd/zram-generator.conf"
-backup_file "$CONF_FILE"
-echo "✍️ 写入配置: $CONF_FILE"
-cat > "$CONF_FILE" <<EOF
+  CONF_FILE="/etc/systemd/zram-generator.conf"
+  backup_file "$CONF_FILE"
+  log_info "写入配置: $CONF_FILE"
+  cat > "$CONF_FILE" <<EOF
 [zram0]
 zram-size = $ZRAM_SIZE
 compression-algorithm = $COMP_ALGO
 swap-priority = $ZRAM_PRIO
 EOF
 
-echo "🔄 应用 zram 配置..."
-systemctl daemon-reload
-systemctl restart systemd-zram-setup@zram0.service 2>/dev/null || true
-systemctl start systemd-zram-setup@zram0.service 2>/dev/null || true
+  log_info "应用 zram 配置..."
+  systemctl daemon-reload
+  systemctl restart systemd-zram-setup@zram0.service 2>/dev/null || true
+  systemctl start systemd-zram-setup@zram0.service 2>/dev/null || true
+fi
 
 # =========================
 # 应用磁盘 swap 配置
 # =========================
-if [[ "$SWAP_ACTION" == "apply" ]]; then
+if [[ "$CONFIG_MODE" == "all" || "$CONFIG_MODE" == "swap" ]] && [[ "$SWAP_ACTION" == "apply" ]]; then
   case "$SWAP_MODE" in
     create)
       create_swapfile "$SWAPFILE_PATH" "$SWAPFILE_SIZE"
       ensure_fstab_swapfile "$SWAPFILE_PATH" "$DISK_SWAP_PRIO"
       enable_swap_target "$SWAPFILE_PATH" "$DISK_SWAP_PRIO"
-      echo "✅ swapfile 已创建并启用: $SWAPFILE_PATH"
+      log_ok "swapfile 已创建并启用: $SWAPFILE_PATH"
       ;;
 
     tune)
       if (( HAS_DISK_SWAP == 0 )); then
-        echo "⚠️ 未检测到磁盘 swap，tune 模式无事可做。你可以改用 create 模式创建 swapfile。"
+        log_warn "未检测到磁盘 swap，tune 模式无事可做。你可以改用 create 模式创建 swapfile。"
       else
-        echo "🔧 调整所有磁盘 swap priority 为: $DISK_SWAP_PRIO（并写入 /etc/fstab 持久化）"
+        log_info "调整所有磁盘 swap priority 为: $DISK_SWAP_PRIO（并写入 /etc/fstab 持久化）"
         update_fstab_swap_pri_all "$DISK_SWAP_PRIO"
 
         while read -r dev; do
@@ -493,15 +747,15 @@ if [[ "$SWAP_ACTION" == "apply" ]]; then
           enable_swap_target "$dev" "$DISK_SWAP_PRIO" || true
         done <<< "$DISK_SWAPS"
 
-        echo "✅ 已尝试应用 priority（如有 systemd/其他机制管理，重启后会更一致）"
+        log_ok "已尝试应用 priority（如有 systemd/其他机制管理，重启后会更一致）"
       fi
       ;;
 
     off)
       if (( HAS_DISK_SWAP == 0 )); then
-        echo "ℹ️ 没有磁盘 swap，无需关闭。"
+        log_info "没有磁盘 swap，无需关闭。"
       else
-        echo "⚠️ 关闭所有磁盘 swap（不会删除文件，但会 swapoff）："
+        log_warn "关闭所有磁盘 swap（不会删除文件，但会 swapoff）："
         while read -r dev; do
           [[ -z "$dev" ]] && continue
           if [[ "$dev" =~ ^/dev/zram[0-9]+$ ]]; then
@@ -509,12 +763,12 @@ if [[ "$SWAP_ACTION" == "apply" ]]; then
           fi
           swapoff "$dev" || true
         done <<< "$DISK_SWAPS"
-        echo "✅ 已关闭磁盘 swap（fstab 未自动清理，如需持久化关闭请手动处理 /etc/fstab）"
+        log_ok "已关闭磁盘 swap（fstab 未自动清理，如需持久化关闭请手动处理 /etc/fstab）"
       fi
       ;;
 
     *)
-      echo "❌ 未知 swap 模式: $SWAP_MODE"
+      log_error "未知 swap 模式: $SWAP_MODE"
       exit 1
       ;;
   esac
@@ -524,13 +778,13 @@ fi
 # sysctl 应用
 # =========================
 if [[ "$SYSCTL_ACTION" == "apply" ]]; then
-  # 简单范围校验（防止明显离谱）
+  # 由于前面已经用 validate_number 验证过，这里只是额外保险
   if ! [[ "$SYS_SWAPPINESS" =~ ^[0-9]+$ ]] || (( SYS_SWAPPINESS < 0 || SYS_SWAPPINESS > 200 )); then
-    echo "❌ vm.swappiness 非法: $SYS_SWAPPINESS（应为 0-200）"
+    log_error "vm.swappiness 非法: $SYS_SWAPPINESS（应为 0-200）"
     exit 1
   fi
   if ! [[ "$SYS_PAGE_CLUSTER" =~ ^[0-9]+$ ]] || (( SYS_PAGE_CLUSTER < 0 || SYS_PAGE_CLUSTER > 9 )); then
-    echo "❌ vm.page-cluster 非法: $SYS_PAGE_CLUSTER"
+    log_error "vm.page-cluster 非法: $SYS_PAGE_CLUSTER"
     exit 1
   fi
   write_sysctl_conf "$SYS_SWAPPINESS" "$SYS_PAGE_CLUSTER"
@@ -540,10 +794,17 @@ fi
 # 显示结果
 # =========================
 echo
-echo "✅ 当前 swap 状态："
-swapon --show || true
+echo "==================== 执行结果 ===================="
+if [[ "$CONFIG_MODE" == "all" || "$CONFIG_MODE" == "zram" ]]; then
+  log_ok "当前 zram 状态："
+  zramctl || true
+  echo
+fi
+if [[ "$CONFIG_MODE" == "all" || "$CONFIG_MODE" == "swap" ]]; then
+  log_ok "当前 swap 状态："
+  swapon --show || true
+  echo
+fi
+echo "=================================================="
 echo
-echo "✅ 当前 zram 状态："
-zramctl || true
-echo
-echo "🎉 完成！"
+echo "🎉 配置完成！"
