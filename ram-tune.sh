@@ -701,6 +701,8 @@ else
   if [[ "$SWAP_MODE" == "create" ]]; then
     echo "swapfile: $SWAPFILE_PATH"
     echo "swapfile 大小: $SWAPFILE_SIZE"
+  elif [[ "$SWAP_MODE" == "tune" ]]; then
+    echo "目标大小: $SWAPFILE_SIZE"
   fi
 fi
 
