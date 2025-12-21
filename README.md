@@ -7,19 +7,9 @@
 
 ### 🚀 快速开始
 
-**交互式安装(推荐):**
+**curl安装:**
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Rain-kl/tunescipt/main/ram-tune.sh -o /tmp/ram-tune.sh && sudo bash /tmp/ram-tune.sh
-```
-
-或使用 wget：
-```bash
-wget -qO /tmp/ram-tune.sh https://raw.githubusercontent.com/Rain-kl/tunescipt/main/ram-tune.sh && sudo bash /tmp/ram-tune.sh
-```
-
-**自动安装（使用默认配置）：**
-```bash
-curl -fsSL https://raw.githubusercontent.com/Rain-kl/tunescipt/main/ram-tune.sh | sudo bash
 ```
 
 ### 配置参数说明
@@ -44,4 +34,14 @@ curl -fsSL https://raw.githubusercontent.com/Rain-kl/tunescipt/main/ram-tune.sh 
 ```
 SSD 磁盘: 优先级较低（10-20），优先使用 zRAM
 HDD 磁盘: 优先级较高（30-50），均衡使用两者
+```
+
+## Socks5 搭建脚本
+
+
+### 🚀 快速开始
+
+**curl安装:**
+```bash
+curl -fsSL https://raw.githubusercontent.com/Rain-kl/tunescipt/main/socks5.sh -o /tmp/socks5.sh && sudo bash /tmp/ram-tune.sh
 ```
