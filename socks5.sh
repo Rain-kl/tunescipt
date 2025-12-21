@@ -23,16 +23,40 @@ detect_os() {
 # 全局变量
 OS_TYPE=$(detect_os)
 
+# 获取服务名称和配置文件路径
+get_service_name() {
+    if [ "$OS_TYPE" = "alpine" ]; then
+        echo "sockd"
+    else
+        echo "danted"
+    fi
+}
+
+get_config_file() {
+    if [ "$OS_TYPE" = "alpine" ]; then
+        echo "/etc/sockd.conf"
+    else
+        echo "/etc/danted.conf"
+    fi
+}
+
+SERVICE_NAME=$(get_service_name)
+CONFIG_FILE=$(get_config_file)
+
 # 获取当前配置的端口
 get_current_port() {
-    if [ -f /etc/danted.conf ]; then
-        grep -m 1 "internal:.*port" /etc/danted.conf | grep -oP 'port = \K\d+'
+    if [ -f "$CONFIG_FILE" ]; then
+        grep -m 1 "internal:.*port" "$CONFIG_FILE" | grep -oP 'port = \K\d+'
     fi
 }
 
 # 获取SOCKS5用户列表（shell为/bin/false的系统用户）
 get_socks5_users() {
-    getent passwd | awk -F: '$7 == "/bin/false" || $7 == "/usr/sbin/nologin" {print $1}' | grep -v "^nobody$" | grep -v "^_"
+    if [ "$OS_TYPE" = "alpine" ]; then
+        getent passwd | awk -F: '$7 == "/sbin/nologin" {print $1}' | grep -v "^nobody$" | grep -v "^_"
+    else
+        getent passwd | awk -F: '$7 == "/bin/false" || $7 == "/usr/sbin/nologin" {print $1}' | grep -v "^nobody$" | grep -v "^_"
+    fi
 }
 
 # 显示现有用户
@@ -58,24 +82,24 @@ install_socks5() {
     
     # 检查是否已安装
     if [ "$OS_TYPE" = "alpine" ]; then
-        if rc-service danted status &>/dev/null; then
+        if rc-service $SERVICE_NAME status &>/dev/null; then
             echo "⚠️  检测到SOCKS5代理已在运行"
             read -p "是否重新安装? (y/n): " REINSTALL
             if [[ ! "$REINSTALL" =~ ^[Yy]$ ]]; then
                 echo "取消安装"
                 return
             fi
-            rc-service danted stop
+            rc-service $SERVICE_NAME stop
         fi
     else
-        if systemctl is-active --quiet danted 2>/dev/null; then
+        if systemctl is-active --quiet $SERVICE_NAME 2>/dev/null; then
             echo "⚠️  检测到SOCKS5代理已在运行"
             read -p "是否重新安装? (y/n): " REINSTALL
             if [[ ! "$REINSTALL" =~ ^[Yy]$ ]]; then
                 echo "取消安装"
                 return
             fi
-            systemctl stop danted
+            systemctl stop $SERVICE_NAME
         fi
     fi
     
@@ -85,8 +109,6 @@ install_socks5() {
         alpine)
             apk update &> /dev/null
             apk add dante-server netcat-openbsd curl openrc &> /dev/null
-            # Alpine 需要启用服务管理
-            rc-update add danted default &> /dev/null
             ;;
         ubuntu|debian)
             apt update &> /dev/null
@@ -139,7 +161,7 @@ install_socks5() {
     
     # 生成配置文件
     echo "📝 生成Dante配置文件..."
-    cat > /etc/danted.conf <<EOF
+    cat > "$CONFIG_FILE" <<EOF
 logoutput: syslog
 internal: 0.0.0.0 port = $PORT
 internal: :: port = $PORT
@@ -184,10 +206,27 @@ EOF
     # 启动服务
     echo "🚀 启动Dante服务..."
     if [ "$OS_TYPE" = "alpine" ]; then
-        rc-service danted restart
+        # 为 Alpine 创建 init.d 脚本
+        cat > /etc/init.d/$SERVICE_NAME <<'INITSCRIPT'
+#!/sbin/openrc-run
+
+name="sockd"
+description="Dante SOCKS server"
+command="/usr/sbin/sockd"
+command_args="-f /etc/sockd.conf"
+pidfile="/var/run/sockd.pid"
+
+depend() {
+    need net
+    after firewall
+}
+INITSCRIPT
+        chmod +x /etc/init.d/$SERVICE_NAME
+        rc-update add $SERVICE_NAME default &> /dev/null
+        rc-service $SERVICE_NAME restart
     else
-        systemctl restart danted
-        systemctl enable danted &> /dev/null
+        systemctl restart $SERVICE_NAME
+        systemctl enable $SERVICE_NAME &> /dev/null
     fi
     
     # 验证安装
@@ -217,9 +256,16 @@ manage_user() {
     echo "================================"
     
     # 检查服务是否安装
-    if ! command -v danted &> /dev/null; then
-        echo "❌ SOCKS5代理未安装，请先执行安装"
-        return
+    if [ "$OS_TYPE" = "alpine" ]; then
+        if ! command -v sockd &> /dev/null; then
+            echo "❌ SOCKS5代理未安装，请先执行安装"
+            return
+        fi
+    else
+        if ! command -v danted &> /dev/null; then
+            echo "❌ SOCKS5代理未安装，请先执行安装"
+            return
+        fi
     fi
     
     # 显示现有用户
@@ -292,13 +338,13 @@ manage_user() {
             done
             
             # 修改配置文件中的端口
-            if [ -f /etc/danted.conf ]; then
+            if [ -f "$CONFIG_FILE" ]; then
                 # 获取网络接口
                 INTERFACE=$(ip -6 route | awk '/default/ {print $5; exit}')
                 [ -z "$INTERFACE" ] && INTERFACE=$(ip route | awk '/default/ {print $5; exit}')
                 
-                sed -i "s/internal: 0.0.0.0 port = [0-9]*/internal: 0.0.0.0 port = $NEW_PORT/" /etc/danted.conf
-                sed -i "s/internal: :: port = [0-9]*/internal: :: port = $NEW_PORT/" /etc/danted.conf
+                sed -i "s/internal: 0.0.0.0 port = [0-9]*/internal: 0.0.0.0 port = $NEW_PORT/" "$CONFIG_FILE"
+                sed -i "s/internal: :: port = [0-9]*/internal: :: port = $NEW_PORT/" "$CONFIG_FILE"
                 
                 # 更新防火墙规则
                 if command -v ufw &> /dev/null; then
@@ -316,9 +362,9 @@ manage_user() {
                 
                 # 重启服务
                 if [ "$OS_TYPE" = "alpine" ]; then
-                    rc-service danted restart
+                    rc-service $SERVICE_NAME restart
                 else
-                    systemctl restart danted
+                    systemctl restart $SERVICE_NAME
                 fi
                 echo "✅ 端口已更新为 $NEW_PORT,服务已重启"
             else
@@ -342,11 +388,12 @@ uninstall_socks5() {
     
     echo "🛑 停止Dante服务..."
     if [ "$OS_TYPE" = "alpine" ]; then
-        rc-service danted stop &> /dev/null
-        rc-update del danted default &> /dev/null
+        rc-service $SERVICE_NAME stop &> /dev/null
+        rc-update del $SERVICE_NAME default &> /dev/null
+        rm -f /etc/init.d/$SERVICE_NAME
     else
-        systemctl stop danted &> /dev/null
-        systemctl disable danted &> /dev/null
+        systemctl stop $SERVICE_NAME &> /dev/null
+        systemctl disable $SERVICE_NAME &> /dev/null
     fi
     
     echo "🗑️  删除软件包..."
@@ -364,7 +411,7 @@ uninstall_socks5() {
     esac
     
     echo "📁 删除配置文件..."
-    rm -f /etc/danted.conf
+    rm -f "$CONFIG_FILE"
     
     # 删除防火墙规则
     CURRENT_PORT=$(get_current_port)
