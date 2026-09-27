@@ -164,8 +164,10 @@ show_help() {
     printf "  -b, --bind <ip>                 本地监听绑定地址 (默认 0.0.0.0)\n"
     printf "  -h, --help                      显示帮助信息\n\n"
     printf "%b示例 (必须以 root 运行):%b\n" "$BOLD" "$NC"
-    printf "  # 转发本地 10000-50000 的所有 TCP/UDP 流量至 1.2.3.4\n"
-    printf "  sh gost.sh -d 1.2.3.4 -p 10000-50000\n\n"
+    printf "  # 转发本地 8080 的所有 TCP/UDP 流量至 1.2.3.4\n"
+    printf "  sh gost.sh -d 1.2.3.4 -p 8080\n\n"
+    printf "  # 转发本地端口段 10000-10020 的所有 TCP/UDP 流量至 1.2.3.4\n"
+    printf "  sh gost.sh -d 1.2.3.4 -p 10000-10020\n\n"
     printf "  # 仅转发 TCP 端口 8443 至目标域名\n"
     printf "  sh gost.sh -d hk.example.com -p 8443 -m tcp\n\n"
     printf "  # 不带任何参数运行，将进入交互式 TUI 管理面板:\n"
@@ -229,6 +231,12 @@ parse_args() {
         if ! validate_port_range "$CLI_PORT"; then
             log_error "端口或端口范围格式无效 (1-65535): $CLI_PORT"
             exit 1
+        fi
+        cli_bounds=$(get_port_bounds "$CLI_PORT")
+        cli_s=$(echo "$cli_bounds" | awk '{print $1}')
+        cli_e=$(echo "$cli_bounds" | awk '{print $2}')
+        if [ $(( cli_e - cli_s )) -gt 500 ]; then
+            log_warn "⚠️  检测到端口范围较大 ($(( cli_e - cli_s + 1 )) 个端口)。GOST 为用户态代理，为每个端口创建独立协程与监听，大范围端口极易导致内存耗尽或启动超时！"
         fi
         CLI_MODE="$(echo "$CLI_MODE" | tr '[:upper:]' '[:lower:]')"
         case "$CLI_MODE" in
@@ -827,7 +835,7 @@ interactive_add_rule() {
     # 端口段输入
     port_spec=""
     while :; do
-        printf "请输入转发端口或范围 (如 8080 或 10000-50000): "
+        printf "请输入转发端口或小范围 (如 8080 或 10000-10020): "
         read -r port_spec
         port_spec=$(echo "$port_spec" | tr -d '[:space:]')
         if [ -z "$port_spec" ]; then
@@ -837,6 +845,20 @@ interactive_add_rule() {
         if ! validate_port_range "$port_spec"; then
             log_error "端口范围格式错误 (1-65535，起始端口 <= 结束端口)"
             continue
+        fi
+        port_bounds=$(get_port_bounds "$port_spec")
+        p_s=$(echo "$port_bounds" | awk '{print $1}')
+        p_e=$(echo "$port_bounds" | awk '{print $2}')
+        if [ $(( p_e - p_s )) -gt 500 ]; then
+            log_warn "⚠️  检测到端口范围过大 ($(( p_e - p_s + 1 )) 个端口)！"
+            log_warn "GOST 是用户态应用代理，每个端口均会创建独立监听与并发协程，大范围端口会导致系统内存暴涨甚至卡死/崩溃。"
+            log_info "万级大范围端口转发强烈推荐使用系统内核级 iptables / nftables。"
+            printf "是否确定仍然添加此大范围端口? (y/N): "
+            read -r confirm_large
+            case "$confirm_large" in
+                [Yy]*) ;;
+                *) continue ;;
+            esac
         fi
         if check_port_overlap "$port_spec"; then
             log_warn "检测到端口段 ${port_spec} 与已有规则存在重叠！"
