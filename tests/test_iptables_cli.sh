@@ -15,8 +15,8 @@ sh ./iptables.sh -d 163.192.29.228 -p 10000-50000 -m all
 grep -q "1|163.192.29.228|10000-50000|all|0.0.0.0|enabled" "$IPT_CONFIG_DIR/rules.conf"
 
 # 验证 mock iptables 输出
-grep -q "iptables -t nat -A IPT_FWD_PREROUTING -p tcp --dport 10000:50000 -j DNAT --to-destination 163.192.29.228:10000:50000" "$MOCK_LOG"
-grep -q "iptables -t nat -A IPT_FWD_PREROUTING -p udp --dport 10000:50000 -j DNAT --to-destination 163.192.29.228:10000:50000" "$MOCK_LOG"
+grep -q "iptables -t nat -A IPT_FWD_PREROUTING -p tcp --dport 10000:50000 -j DNAT --to-destination 163.192.29.228:10000-50000" "$MOCK_LOG"
+grep -q "iptables -t nat -A IPT_FWD_PREROUTING -p udp --dport 10000:50000 -j DNAT --to-destination 163.192.29.228:10000-50000" "$MOCK_LOG"
 
 echo "=== Testing CLI Mode: Additional rule with domain & custom bind ==="
 sh ./iptables.sh -d 1.1.1.1 -p 8443 -m tcp -b 127.0.0.1

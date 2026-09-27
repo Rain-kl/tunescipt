@@ -494,11 +494,11 @@ apply_iptables_rules() {
         esac
 
         for p in $protocols; do
-            # 1. DNAT 规则 (PREROUTING)
+            # 1. DNAT 规则 (PREROUTING) - --to-destination 端口范围必须使用连字符例如 10000-50000
             if [ -n "$bind_arg" ]; then
-                run_iptables -t nat -A "$CHAIN_PREROUTING" $bind_arg -p "$p" --dport "$fmt_port" -j DNAT --to-destination "${resolved_target}:${fmt_port}"
+                run_iptables -t nat -A "$CHAIN_PREROUTING" $bind_arg -p "$p" --dport "$fmt_port" -j DNAT --to-destination "${resolved_target}:${r_port}"
             else
-                run_iptables -t nat -A "$CHAIN_PREROUTING" -p "$p" --dport "$fmt_port" -j DNAT --to-destination "${resolved_target}:${fmt_port}"
+                run_iptables -t nat -A "$CHAIN_PREROUTING" -p "$p" --dport "$fmt_port" -j DNAT --to-destination "${resolved_target}:${r_port}"
             fi
 
             # 2. SNAT (MASQUERADE) 规则 (POSTROUTING)

@@ -25,8 +25,8 @@ apply_iptables_rules
 [ -f "$MOCK_LOG" ]
 
 # 检查 DNAT 规则
-grep -q "iptables -t nat -A IPT_FWD_PREROUTING -p tcp --dport 10000:50000 -j DNAT --to-destination 163.192.29.228:10000:50000" "$MOCK_LOG"
-grep -q "iptables -t nat -A IPT_FWD_PREROUTING -p udp --dport 10000:50000 -j DNAT --to-destination 163.192.29.228:10000:50000" "$MOCK_LOG"
+grep -q "iptables -t nat -A IPT_FWD_PREROUTING -p tcp --dport 10000:50000 -j DNAT --to-destination 163.192.29.228:10000-50000" "$MOCK_LOG"
+grep -q "iptables -t nat -A IPT_FWD_PREROUTING -p udp --dport 10000:50000 -j DNAT --to-destination 163.192.29.228:10000-50000" "$MOCK_LOG"
 grep -q "iptables -t nat -A IPT_FWD_PREROUTING -d 10.0.0.2 -p tcp --dport 8443 -j DNAT --to-destination 1.1.1.1:8443" "$MOCK_LOG"
 
 # 检查 disabled 规则未被生成
