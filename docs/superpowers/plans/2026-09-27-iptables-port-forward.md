@@ -34,10 +34,10 @@
   - `format_iptables_port(port_spec)`: 将 `10000-50000` 转化为 iptables 识别的 `10000:50000`，单端口返回原样
   - `parse_args("$@")`: 解析 `-d`, `-p`, `-m`, `-b`, `-h`
 
-- [ ] **Step 1: 编写测试脚本 `tests/test_iptables_core.sh`**
-- [ ] **Step 2: 运行测试验证失败 (RED)**
-- [ ] **Step 3: 在 `iptables.sh` 实现基础校验与参数解析逻辑 (GREEN)**
-- [ ] **Step 4: 运行测试并验证通过，提交代码**
+- [x] **Step 1: 编写测试脚本 `tests/test_iptables_core.sh`**
+- [x] **Step 2: 运行测试验证失败 (RED)**
+- [x] **Step 3: 在 `iptables.sh` 实现基础校验与参数解析逻辑 (GREEN)**
+- [x] **Step 4: 运行测试并验证通过，提交代码**
 
 ---
 
@@ -56,9 +56,9 @@
   - `delete_rule(id)`: 移除规则
   - `list_rules()`: 终端格式化输出规则表格
 
-- [ ] **Step 1: 编写规则引擎测试 `tests/test_iptables_rules.sh`**
-- [ ] **Step 2: 在 `iptables.sh` 实现规则存储、查询、重叠检测与增删函数**
-- [ ] **Step 3: 运行测试验证通过，提交代码**
+- [x] **Step 1: 编写规则引擎测试 `tests/test_iptables_rules.sh`**
+- [x] **Step 2: 在 `iptables.sh` 实现规则存储、查询、重叠检测与增删函数**
+- [x] **Step 3: 运行测试验证通过，提交代码**
 
 ---
 
@@ -76,10 +76,10 @@
   - `save_iptables_rules()`: 根据发行版持久化规则并设置开机自启
   - `cleanup_iptables_chains()`: 安全卸载专用链，恢复干净网络状态
 
-- [ ] **Step 1: 编写 iptables 命令生成与环境适配测试**
-- [ ] **Step 2: 实现环境准备与多系统持久化逻辑**
-- [ ] **Step 3: 实现自定义链与规则全量同步逻辑**
-- [ ] **Step 4: 运行测试验证通过，提交代码**
+- [x] **Step 1: 编写 iptables 命令生成与环境适配测试**
+- [x] **Step 2: 实现环境准备与多系统持久化逻辑**
+- [x] **Step 3: 实现自定义链与规则全量同步逻辑**
+- [x] **Step 4: 运行测试验证通过，提交代码**
 
 ---
 
@@ -95,10 +95,10 @@
   - `interactive_add_rule()`, `interactive_delete_rule()`, `interactive_service_control()`
   - `show_menu()`, `menu_loop()`: 交互式主控制台
 
-- [ ] **Step 1: 编写 CLI 端到端自动化测试**
-- [ ] **Step 2: 完成 CLI 部署流程与 TUI 交互菜单**
-- [ ] **Step 3: 运行全量测试套件验证通过**
-- [ ] **Step 4: 提交并推送到 GitHub 远程仓库**
+- [x] **Step 1: 编写 CLI 端到端自动化测试**
+- [x] **Step 2: 完成 CLI 部署流程与 TUI 交互菜单**
+- [x] **Step 3: 运行全量测试套件验证通过**
+- [x] **Step 4: 提交并推送到 GitHub 远程仓库**
 
 ---
 
@@ -108,7 +108,7 @@
 - Target: 中转机 `144.225.255.118` (Alpine)
 - Verify: 本地 Xray 穿透测试
 
-- [ ] **Step 1: 将 `iptables.sh` 部署至中转机 `144.225.255.118`**
-- [ ] **Step 2: 测试使用 `iptables.sh` 转发 `10000-50000` 大端口范围**
-- [ ] **Step 3: 本地使用 Xray 测试验证 40000 端口连通性**
-- [ ] **Step 4: 验证系统内存与负载**
+- [x] **Step 1: 将 `iptables.sh` 部署至中转机 `144.225.255.118`**
+- [x] **Step 2: 测试使用 `iptables.sh` 转发 `10000-50000` 大端口范围**
+- [x] **Step 3: 本地使用 Xray 测试验证 40000 端口连通性**
+- [x] **Step 4: 验证系统内存与负载**
