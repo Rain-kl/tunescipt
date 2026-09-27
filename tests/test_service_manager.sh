@@ -1,12 +1,12 @@
-#!/bin/bash
-set -euo pipefail
+#!/bin/sh
+set -e
 
 export TEST_MODE=1
 export TEST_DIR="./tmp_service_test"
 mkdir -p "$TEST_DIR/system" "$TEST_DIR/init.d"
 trap 'rm -rf "$TEST_DIR"' EXIT
 
-source ./gost.sh --source-only
+. ./gost.sh --source-only
 
 # 测试 1: Systemd 服务模板生成
 echo "Testing Systemd service template generation..."

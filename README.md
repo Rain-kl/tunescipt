@@ -9,7 +9,7 @@
 
 **curl安装:**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Rain-kl/tunescipt/main/ram-tune.sh -o /tmp/ram-tune.sh && sudo bash /tmp/ram-tune.sh
+curl -fsSL https://raw.githubusercontent.com/Rain-kl/tunescipt/main/ram-tune.sh -o /tmp/ram-tune.sh && bash /tmp/ram-tune.sh
 ```
 
 ### 配置参数说明
@@ -43,24 +43,26 @@ HDD 磁盘: 优先级较高（30-50），均衡使用两者
 
 **curl安装:**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Rain-kl/tunescipt/main/socks5.sh -o /tmp/socks5.sh && sudo bash /tmp/socks5.sh
+curl -fsSL https://raw.githubusercontent.com/Rain-kl/tunescipt/main/socks5.sh -o /tmp/socks5.sh && bash /tmp/socks5.sh
 ```
 
 ## GOST 端口段转发脚本 (支持 Alpine / Debian 系)
 
 基于高性能 **GOST v3** 核心的高并发端口段转发自动化部署脚本，支持原生 Unix 命令运行、无第三方语言依赖，深度适配 Alpine Linux (OpenRC) 与 Debian / Ubuntu / CentOS 等发行版 (Systemd)。
 
+> ⚠️ **注意**：本仓库系列脚本必须由 **root** 用户直接运行（Alpine Linux 等精简系统默认不带 `sudo`，请先执行 `su -` 切换至 root）。
+
 ### 🚀 快速开始
 
 **1. CLI 一键非交互部署 (自动后台常驻与开机自启):**
 ```bash
 # 自动部署并转发 10000-50000 的所有 TCP/UDP 流量至目标 IP 对应端口
-curl -fsSL https://raw.githubusercontent.com/Rain-kl/tunescipt/main/gost.sh -o /tmp/gost.sh && sudo bash /tmp/gost.sh -d <目标IP或域名> -p 10000-50000
+curl -fsSL https://raw.githubusercontent.com/Rain-kl/tunescipt/main/gost.sh -o /tmp/gost.sh && bash /tmp/gost.sh -d <目标IP或域名> -p 10000-50000
 ```
 
 **2. 交互式 TUI 管理面板:**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Rain-kl/tunescipt/main/gost.sh -o /tmp/gost.sh && sudo bash /tmp/gost.sh
+curl -fsSL https://raw.githubusercontent.com/Rain-kl/tunescipt/main/gost.sh -o /tmp/gost.sh && bash /tmp/gost.sh
 ```
 
 ### CLI 参数说明

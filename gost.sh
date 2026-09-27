@@ -1,12 +1,12 @@
-#!/bin/bash
+#!/bin/sh
 # ==============================================================================
 # Script Name: gost.sh
-# Description: GOST v3 端口转发自动化部署与管理脚本 (支持 Alpine / Debian 系)
+# Description: GOST v3 端口转发自动化部署与管理脚本 (兼容 POSIX sh，支持 Alpine/Debian 等)
 # Author: Rain-kl & Antigravity
 # GitHub: https://github.com/Rain-kl/tunescipt
 # ==============================================================================
 
-set -eo pipefail
+set -e
 
 # 脚本版本与基础常量
 SCRIPT_VERSION="1.0.0"
@@ -26,18 +26,18 @@ CYAN='\033[0;36m'
 BOLD='\033[1m'
 NC='\033[0m' # No Color
 
-log_info()  { echo -e "${BLUE}ℹ️  $*${NC}"; }
-log_ok()    { echo -e "${GREEN}✅ $*${NC}"; }
-log_warn()  { echo -e "${YELLOW}⚠️  $*${NC}"; }
-log_error() { echo -e "${RED}❌ $*${NC}" >&2; }
+log_info()  { printf "%bℹ️  %s%b\n" "$BLUE" "$*" "$NC"; }
+log_ok()    { printf "%b✅ %s%b\n" "$GREEN" "$*" "$NC"; }
+log_warn()  { printf "%b⚠️  %s%b\n" "$YELLOW" "$*" "$NC"; }
+log_error() { printf "%b❌ %s%b\n" "$RED" "$*" "$NC" >&2; }
 
-# 检测并确认 root 权限
+# 检测并确认 root 权限 (脚本必须由 root 用户直接运行)
 require_root() {
     if [ "${TEST_MODE:-0}" = "1" ]; then
         return 0
     fi
     if [ "$(id -u)" -ne 0 ]; then
-        log_error "请使用 root 用户或 sudo 执行此脚本"
+        log_error "本脚本必须使用 root 用户直接运行 (请先执行 'su -' 或登录 root 用户)"
         exit 1
     fi
 }
@@ -70,7 +70,6 @@ detect_os() {
 
 # 检测系统架构 (对应 GOST release 架构命名)
 detect_arch() {
-    local arch
     arch="$(uname -m)"
     case "$arch" in
         x86_64|amd64)
@@ -93,85 +92,83 @@ detect_arch() {
 
 # 校验端口范围 (支持单一端口如 8080，或区间如 10000-50000)
 validate_port_range() {
-    local spec="$1"
-    if [ -z "$spec" ]; then
-        return 1
-    fi
+    spec="$1"
+    [ -z "$spec" ] && return 1
 
-    if [[ "$spec" =~ ^([0-9]+)-([0-9]+)$ ]]; then
-        local start="${BASH_REMATCH[1]}"
-        local end="${BASH_REMATCH[2]}"
-        if [ "$start" -ge 1 ] && [ "$start" -le 65535 ] && \
-           [ "$end" -ge 1 ] && [ "$end" -le 65535 ] && \
-           [ "$start" -le "$end" ]; then
+    case "$spec" in
+        *-*)
+            p_start=$(echo "$spec" | cut -d'-' -f1)
+            p_end=$(echo "$spec" | cut -d'-' -f2)
+            case "$p_start" in
+                ''|*[!0-9]*) return 1 ;;
+            esac
+            case "$p_end" in
+                ''|*[!0-9]*) return 1 ;;
+            esac
+            [ "$p_start" -ge 1 ] 2>/dev/null || return 1
+            [ "$p_start" -le 65535 ] 2>/dev/null || return 1
+            [ "$p_end" -ge 1 ] 2>/dev/null || return 1
+            [ "$p_end" -le 65535 ] 2>/dev/null || return 1
+            [ "$p_start" -le "$p_end" ] 2>/dev/null || return 1
             return 0
-        fi
-        return 1
-    elif [[ "$spec" =~ ^[0-9]+$ ]]; then
-        if [ "$spec" -ge 1 ] && [ "$spec" -le 65535 ]; then
+            ;;
+        *)
+            case "$spec" in
+                ''|*[!0-9]*) return 1 ;;
+            esac
+            [ "$spec" -ge 1 ] 2>/dev/null || return 1
+            [ "$spec" -le 65535 ] 2>/dev/null || return 1
             return 0
-        fi
-        return 1
-    fi
-    return 1
+            ;;
+    esac
 }
 
 # 校验目标地址 (支持 IPv4, IPv6, 域名)
 validate_target() {
-    local target="$1"
-    if [ -z "$target" ]; then
-        return 1
-    fi
+    target="$1"
+    [ -z "$target" ] && return 1
 
-    # IPv4 正则校验
-    local ipv4_regex="^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$"
-    if [[ "$target" =~ $ipv4_regex ]]; then
-        return 0
-    fi
+    # 包含特殊注入字符或连续点则无效
+    case "$target" in
+        *[\ /\\\'\"\`\$\;\&\|\<\>\(\)\{\}]*) return 1 ;;
+        *..*) return 1 ;;
+    esac
 
-    # IPv6 简单结构校验 (含至少一个冒号，仅含十六进制与冒号)
-    if [[ "$target" =~ ^[0-9a-fA-F:]+$ ]] && [[ "$target" == *:* ]]; then
-        return 0
-    fi
-
-    # 域名/主机名正则校验
-    local domain_regex="^([a-zA-Z0-9](([a-zA-Z0-9-]){0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$"
-    local hostname_regex="^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$"
-    if [[ "$target" =~ $domain_regex ]] || [[ "$target" =~ $hostname_regex ]]; then
-        # 排除连续点等异常域名
-        if [[ "$target" =~ \.\. ]]; then
-            return 1
-        fi
-        return 0
-    fi
-
-    return 1
+    echo "$target" | awk '
+    function is_byte(x) { return (x ~ /^[0-9]+$/ && x >= 0 && x <= 255) }
+    {
+        t = $0
+        # IPv4 检查
+        if (split(t, a, ".") == 4) {
+            if (is_byte(a[1]) && is_byte(a[2]) && is_byte(a[3]) && is_byte(a[4])) exit 0
+        }
+        # IPv6 检查 (包含冒号且十六进制字符)
+        if (index(t, ":") > 0 && t ~ /^[0-9a-fA-F:]+$/) exit 0
+        # 域名或合法主机名检查
+        if (t ~ /^([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/ || t ~ /^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$/) exit 0
+        exit 1
+    }'
 }
 
 # 显示帮助信息
 show_help() {
-    echo -e "${BOLD}GOST 端口转发自动化部署脚本 (v${SCRIPT_VERSION})${NC}
-
-${BOLD}用法:${NC}
-  bash gost.sh [选项]
-  curl -fsSL https://raw.githubusercontent.com/Rain-kl/tunescipt/main/gost.sh | sudo bash -s -- [选项]
-
-${BOLD}CLI 快速选项:${NC}
-  -d, --destination <ip/domain>   目标转发地址 (必填，支持域名或 IPv4/IPv6)
-  -p, --port <port/range>         转发端口或端口范围 (必填，如 8080 或 10000-50000)
-  -m, --mode <proto>              转发协议: all (默认 TCP+UDP), tcp, udp
-  -b, --bind <ip>                 本地监听绑定地址 (默认 0.0.0.0)
-  -h, --help                      显示帮助信息
-
-${BOLD}示例:${NC}
-  # 转发本地 10000-50000 的所有 TCP/UDP 流量至 1.2.3.4
-  sudo bash gost.sh -d 1.2.3.4 -p 10000-50000
-
-  # 仅转发 TCP 端口 8443 至目标域名
-  sudo bash gost.sh -d hk.example.com -p 8443 -m tcp
-
-  # 不带任何参数运行，将进入交互式 TUI 管理面板:
-  sudo bash gost.sh"
+    printf "%bGOST 端口转发自动化部署脚本 (v%s)%b\n\n" "$BOLD" "$SCRIPT_VERSION" "$NC"
+    printf "%b用法:%b\n" "$BOLD" "$NC"
+    printf "  sh gost.sh [选项]\n"
+    printf "  curl -fsSL https://raw.githubusercontent.com/Rain-kl/tunescipt/main/gost.sh | sh -s -- [选项]\n\n"
+    printf "%bCLI 快速选项:%b\n" "$BOLD" "$NC"
+    printf "  -d, --destination <ip/domain>   目标转发地址 (必填，支持域名或 IPv4/IPv6)\n"
+    printf "  -p, --port <port/range>         转发端口或端口范围 (必填，如 8080 或 10000-50000)\n"
+    printf "  -m, --mode <proto>              转发协议: all (默认 TCP+UDP), tcp, udp\n"
+    printf "  -b, --bind <ip>                 本地监听绑定地址 (默认 0.0.0.0)\n"
+    printf "  -h, --help                      显示帮助信息\n\n"
+    printf "%b示例 (必须以 root 运行):%b\n" "$BOLD" "$NC"
+    printf "  # 转发本地 10000-50000 的所有 TCP/UDP 流量至 1.2.3.4\n"
+    printf "  sh gost.sh -d 1.2.3.4 -p 10000-50000\n\n"
+    printf "  # 仅转发 TCP 端口 8443 至目标域名\n"
+    printf "  sh gost.sh -d hk.example.com -p 8443 -m tcp\n\n"
+    printf "  # 不带任何参数运行，将进入交互式 TUI 管理面板:\n"
+    printf "  sh gost.sh\n"
 }
 
 # 解析 CLI 命令行参数
@@ -209,7 +206,6 @@ parse_args() {
                 exit 0
                 ;;
             --source-only)
-                # 供测试脚本引用环境，不执行主逻辑
                 return 0
                 ;;
             *)
@@ -257,29 +253,32 @@ EOF
     fi
 }
 
-# 解析端口范围为起始与结束数字
+# 解析端口范围为起始与结束数字 (返回: "start end")
 get_port_bounds() {
-    local spec="$1"
-    if [[ "$spec" =~ ^([0-9]+)-([0-9]+)$ ]]; then
-        echo "${BASH_REMATCH[1]} ${BASH_REMATCH[2]}"
-    elif [[ "$spec" =~ ^[0-9]+$ ]]; then
-        echo "$spec $spec"
-    else
-        echo "0 0"
-    fi
+    spec="$1"
+    case "$spec" in
+        *-*)
+            s=$(echo "$spec" | cut -d'-' -f1)
+            e=$(echo "$spec" | cut -d'-' -f2)
+            echo "$s $e"
+            ;;
+        *)
+            echo "$spec $spec"
+            ;;
+    esac
 }
 
 # 检测端口是否与已有启用规则重叠
 check_port_overlap() {
-    local new_spec="$1"
-    local exclude_id="${2:-}"
+    new_spec="$1"
+    exclude_id="${2:-}"
     ensure_config_dir
 
-    local new_bounds
     new_bounds=$(get_port_bounds "$new_spec")
-    read -r new_start new_end <<< "$new_bounds"
+    new_start=$(echo "$new_bounds" | awk '{print $1}')
+    new_end=$(echo "$new_bounds" | awk '{print $2}')
 
-    if [ "$new_start" -eq 0 ]; then
+    if [ "$new_start" -eq 0 ] 2>/dev/null; then
         return 1
     fi
 
@@ -287,57 +286,63 @@ check_port_overlap() {
         return 1
     fi
 
+    overlap_found=0
     while IFS='|' read -r r_id r_target r_port r_proto r_bind r_status || [ -n "$r_id" ]; do
-        # 跳过注释行、空行与指定排除 ID
-        [[ "$r_id" =~ ^#.*$ ]] && continue
-        [ -z "$r_id" ] && continue
+        case "$r_id" in
+            '#'*|'') continue ;;
+        esac
         [ "$r_id" = "$exclude_id" ] && continue
         [ "${r_status:-enabled}" != "enabled" ] && continue
 
-        local exist_bounds
         exist_bounds=$(get_port_bounds "$r_port")
-        read -r exist_start exist_end <<< "$exist_bounds"
+        exist_start=$(echo "$exist_bounds" | awk '{print $1}')
+        exist_end=$(echo "$exist_bounds" | awk '{print $2}')
 
-        # 判断区间重叠: max(start1, start2) <= min(end1, end2)
-        local max_start=$(( new_start > exist_start ? new_start : exist_start ))
-        local min_end=$(( new_end < exist_end ? new_end : exist_end ))
+        # 区间重叠判断: max(start1, start2) <= min(end1, end2)
+        max_start=$(( new_start > exist_start ? new_start : exist_start ))
+        min_end=$(( new_end < exist_end ? new_end : exist_end ))
 
         if [ "$max_start" -le "$min_end" ]; then
-            # 重叠
-            return 0
+            overlap_found=1
+            break
         fi
     done < "$RULES_FILE"
 
-    return 1
+    if [ "$overlap_found" -eq 1 ]; then
+        return 0
+    else
+        return 1
+    fi
 }
 
 # 获取下一个自增 Rule ID
 get_next_rule_id() {
     ensure_config_dir
-    local max_id=0
+    max_id=0
     while IFS='|' read -r r_id rest || [ -n "$r_id" ]; do
-        [[ "$r_id" =~ ^#.*$ ]] && continue
-        [ -z "$r_id" ] && continue
-        if [[ "$r_id" =~ ^[0-9]+$ ]]; then
-            if [ "$r_id" -gt "$max_id" ]; then
-                max_id="$r_id"
-            fi
-        fi
+        case "$r_id" in
+            '#'*|'') continue ;;
+            *[!0-9]*) continue ;;
+            *)
+                if [ "$r_id" -gt "$max_id" ] 2>/dev/null; then
+                    max_id="$r_id"
+                fi
+                ;;
+        esac
     done < "$RULES_FILE"
     echo $(( max_id + 1 ))
 }
 
 # 添加新转发规则
 add_rule() {
-    local target="$1"
-    local port_spec="$2"
-    local proto="${3:-all}"
-    local bind_ip="${4:-0.0.0.0}"
-    local status="${5:-enabled}"
+    target="$1"
+    port_spec="$2"
+    proto="${3:-all}"
+    bind_ip="${4:-0.0.0.0}"
+    status="${5:-enabled}"
 
     ensure_config_dir
 
-    local next_id
     next_id=$(get_next_rule_id)
 
     echo "${next_id}|${target}|${port_spec}|${proto}|${bind_ip}|${status}" >> "$RULES_FILE"
@@ -347,7 +352,7 @@ add_rule() {
 
 # 删除转发规则
 delete_rule() {
-    local id="$1"
+    id="$1"
     ensure_config_dir
 
     if ! grep -q "^${id}|" "$RULES_FILE" 2>/dev/null; then
@@ -355,7 +360,6 @@ delete_rule() {
         return 1
     fi
 
-    local tmp_file
     tmp_file=$(mktemp "${GOST_CONFIG_DIR}/rules.tmp.XXXXXX")
     grep -v "^${id}|" "$RULES_FILE" > "$tmp_file" || true
     mv "$tmp_file" "$RULES_FILE"
@@ -366,15 +370,15 @@ delete_rule() {
 # 格式化展示规则列表
 list_rules() {
     ensure_config_dir
-    echo -e "${BOLD}当前转发规则列表:${NC}"
+    printf "%b当前转发规则列表:%b\n" "$BOLD" "$NC"
     printf "%-5s | %-18s | %-24s | %-6s | %-10s | %-8s\n" "ID" "监听端口" "转发目标" "协议" "绑定地址" "状态"
     echo "----------------------------------------------------------------------------------------"
-    local count=0
+    count=0
     while IFS='|' read -r r_id r_target r_port r_proto r_bind r_status || [ -n "$r_id" ]; do
-        [[ "$r_id" =~ ^#.*$ ]] && continue
-        [ -z "$r_id" ] && continue
+        case "$r_id" in
+            '#'*|'') continue ;;
+        esac
         count=$((count + 1))
-        local status_display
         if [ "${r_status:-enabled}" = "enabled" ]; then
             status_display="${GREEN}启用${NC}"
         else
@@ -392,7 +396,6 @@ list_rules() {
 # 编译生成 GOST v3 config.yaml
 generate_gost_config() {
     ensure_config_dir
-    local tmp_yaml
     tmp_yaml=$(mktemp "${GOST_CONFIG_DIR}/config.yaml.tmp.XXXXXX")
 
     cat << 'EOF' > "$tmp_yaml"
@@ -401,16 +404,16 @@ generate_gost_config() {
 services:
 EOF
 
-    local has_services=0
+    has_services=0
     while IFS='|' read -r r_id r_target r_port r_proto r_bind r_status || [ -n "$r_id" ]; do
-        [[ "$r_id" =~ ^#.*$ ]] && continue
-        [ -z "$r_id" ] && continue
+        case "$r_id" in
+            '#'*|'') continue ;;
+        esac
         [ "${r_status:-enabled}" != "enabled" ] && continue
 
         has_services=1
 
         # 处理监听地址
-        local listen_addr
         if [ -z "$r_bind" ] || [ "$r_bind" = "0.0.0.0" ]; then
             listen_addr=":${r_port}"
         else
@@ -418,11 +421,16 @@ EOF
         fi
 
         # 处理目标地址 (IPv6 包含冒号需加中括号)
-        local formatted_target="$r_target"
-        if [[ "$formatted_target" == *:* ]] && [[ "$formatted_target" != \[*\]* ]]; then
-            formatted_target="[${formatted_target}]"
-        fi
-        local target_addr="${formatted_target}:${r_port}"
+        formatted_target="$r_target"
+        case "$formatted_target" in
+            *:*)
+                case "$formatted_target" in
+                    \[*\]*) ;;
+                    *) formatted_target="[${formatted_target}]" ;;
+                esac
+                ;;
+        esac
+        target_addr="${formatted_target}:${r_port}"
 
         # 根据协议生成 TCP / UDP 配置
         if [ "$r_proto" = "all" ] || [ "$r_proto" = "tcp" ]; then
@@ -470,7 +478,7 @@ SERVICE_NAME="gost-forward"
 
 # 生成 Systemd 服务配置
 generate_systemd_service() {
-    local target_path="$1"
+    target_path="$1"
     mkdir -p "$(dirname "$target_path")"
     cat << EOF > "$target_path"
 [Unit]
@@ -493,7 +501,7 @@ EOF
 
 # 生成 OpenRC 服务配置
 generate_openrc_service() {
-    local target_path="$1"
+    target_path="$1"
     mkdir -p "$(dirname "$target_path")"
     cat << EOF > "$target_path"
 #!/sbin/openrc-run
@@ -515,7 +523,6 @@ EOF
 
 # 安装基础依赖
 install_dependencies() {
-    local os
     os="$(detect_os)"
     log_info "检查并安装必要系统组件..."
     case "$os" in
@@ -541,7 +548,6 @@ install_dependencies() {
 # 下载并安装 GOST 二进制
 install_gost_binary() {
     if [ -x "$GOST_BIN" ]; then
-        local current_ver
         current_ver="$("$GOST_BIN" -V 2>&1 | head -n 1)"
         log_info "检测到已安装 GOST: ${current_ver}"
         return 0
@@ -549,23 +555,20 @@ install_gost_binary() {
 
     install_dependencies
 
-    local arch
     arch="$(detect_arch)"
     log_info "正在下载 GOST v3 (Linux/${arch})..."
 
-    local gost_version="3.3.0"
-    local filename="gost_${gost_version}_linux_${arch}.tar.gz"
-    local download_urls=(
-        "https://github.com/go-gost/gost/releases/download/v${gost_version}/${filename}"
-        "https://ghproxy.net/https://github.com/go-gost/gost/releases/download/v${gost_version}/${filename}"
-        "https://mirror.ghproxy.com/https://github.com/go-gost/gost/releases/download/v${gost_version}/${filename}"
-    )
+    gost_version="3.3.0"
+    filename="gost_${gost_version}_linux_${arch}.tar.gz"
 
-    local tmp_dir
     tmp_dir="$(mktemp -d)"
-    local success=0
+    success=0
 
-    for url in "${download_urls[@]}"; do
+    for url in \
+        "https://github.com/go-gost/gost/releases/download/v${gost_version}/${filename}" \
+        "https://ghproxy.net/https://github.com/go-gost/gost/releases/download/v${gost_version}/${filename}" \
+        "https://mirror.ghproxy.com/https://github.com/go-gost/gost/releases/download/v${gost_version}/${filename}"
+    do
         log_info "尝试下载源: ${url}"
         if curl -fsSL --connect-timeout 10 -m 60 "$url" -o "${tmp_dir}/${filename}"; then
             success=1
@@ -596,7 +599,6 @@ install_gost_binary() {
 
 # 安装并配置系统自启服务
 setup_system_service() {
-    local os
     os="$(detect_os)"
     log_info "配置系统服务与开机自启..."
 
@@ -618,7 +620,6 @@ setup_system_service() {
 
 # 获取服务运行状态 (running / stopped / not_installed)
 get_service_status() {
-    local os
     os="$(detect_os)"
     if [ "$os" = "alpine" ]; then
         if [ ! -f "${OPENRC_SERVICE_DIR}/${SERVICE_NAME}" ]; then
@@ -656,7 +657,6 @@ is_autostart_enabled() {
     if [ "${TEST_MODE:-0}" = "1" ]; then
         return 0
     fi
-    local os
     os="$(detect_os)"
     if [ "$os" = "alpine" ]; then
         rc-status default 2>/dev/null | grep -q "${SERVICE_NAME}"
@@ -668,7 +668,6 @@ is_autostart_enabled() {
 # 启动服务
 start_service() {
     if [ "${TEST_MODE:-0}" != "1" ]; then
-        local os
         os="$(detect_os)"
         if [ "$os" = "alpine" ]; then
             rc-service "${SERVICE_NAME}" start >/dev/null 2>&1 || true
@@ -683,7 +682,6 @@ start_service() {
 # 停止服务
 stop_service() {
     if [ "${TEST_MODE:-0}" != "1" ]; then
-        local os
         os="$(detect_os)"
         if [ "$os" = "alpine" ]; then
             rc-service "${SERVICE_NAME}" stop >/dev/null 2>&1 || true
@@ -697,7 +695,6 @@ stop_service() {
 # 重启服务
 restart_service() {
     if [ "${TEST_MODE:-0}" != "1" ]; then
-        local os
         os="$(detect_os)"
         if [ "$os" = "alpine" ]; then
             rc-service "${SERVICE_NAME}" restart >/dev/null 2>&1 || rc-service "${SERVICE_NAME}" start >/dev/null 2>&1 || true
@@ -712,7 +709,6 @@ restart_service() {
 # 开启自启
 enable_autostart() {
     if [ "${TEST_MODE:-0}" != "1" ]; then
-        local os
         os="$(detect_os)"
         if [ "$os" = "alpine" ]; then
             rc-update add "${SERVICE_NAME}" default >/dev/null 2>&1 || true
@@ -726,7 +722,6 @@ enable_autostart() {
 # 关闭自启
 disable_autostart() {
     if [ "${TEST_MODE:-0}" != "1" ]; then
-        local os
         os="$(detect_os)"
         if [ "$os" = "alpine" ]; then
             rc-update del "${SERVICE_NAME}" default >/dev/null 2>&1 || true
@@ -739,11 +734,10 @@ disable_autostart() {
 
 # 管理防火墙端口
 manage_firewall() {
-    local port_spec="$1"
-    local action="${2:-allow}" # allow | delete
-    local proto="${3:-all}"    # all | tcp | udp
+    port_spec="$1"
+    action="${2:-allow}" # allow | delete
+    proto="${3:-all}"    # all | tcp | udp
 
-    # 如果有 ufw
     if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
         if [ "$action" = "allow" ]; then
             [ "$proto" = "all" ] || [ "$proto" = "tcp" ] && ufw allow "${port_spec}/tcp" >/dev/null 2>&1 || true
@@ -754,7 +748,7 @@ manage_firewall() {
         fi
         log_info "已更新 UFW 防火墙端口放行规则: ${port_spec} (${proto})"
     elif command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
-        local op="--add-port"
+        op="--add-port"
         [ "$action" = "delete" ] && op="--remove-port"
         [ "$proto" = "all" ] || [ "$proto" = "tcp" ] && firewall-cmd --permanent "${op}=${port_spec}/tcp" >/dev/null 2>&1 || true
         [ "$proto" = "all" ] || [ "$proto" = "udp" ] && firewall-cmd --permanent "${op}=${port_spec}/udp" >/dev/null 2>&1 || true
@@ -803,13 +797,14 @@ cli_deploy() {
 # 交互式添加规则
 interactive_add_rule() {
     echo ""
-    echo -e "${BOLD}=== 添加 GOST 端口转发规则 ===${NC}"
+    printf "%b=== 添加 GOST 端口转发规则 ===%b\n" "$BOLD" "$NC"
     
     # 目标地址输入
-    local target=""
-    while true; do
-        read -r -p "请输入目标转发地址 (域名或 IP): " target
-        target="${target// /}"
+    target=""
+    while :; do
+        printf "请输入目标转发地址 (域名或 IP): "
+        read -r target
+        target=$(echo "$target" | tr -d '[:space:]')
         if [ -z "$target" ]; then
             log_error "目标地址不能为空"
             continue
@@ -822,10 +817,11 @@ interactive_add_rule() {
     done
 
     # 端口段输入
-    local port_spec=""
-    while true; do
-        read -r -p "请输入转发端口或范围 (如 8080 或 10000-50000): " port_spec
-        port_spec="${port_spec// /}"
+    port_spec=""
+    while :; do
+        printf "请输入转发端口或范围 (如 8080 或 10000-50000): "
+        read -r port_spec
+        port_spec=$(echo "$port_spec" | tr -d '[:space:]')
         if [ -z "$port_spec" ]; then
             log_error "端口不能为空"
             continue
@@ -836,10 +832,12 @@ interactive_add_rule() {
         fi
         if check_port_overlap "$port_spec"; then
             log_warn "检测到端口段 ${port_spec} 与已有规则存在重叠！"
-            read -r -p "是否仍然强制添加此规则? (y/N): " force_add
-            if [[ ! "$force_add" =~ ^[Yy]$ ]]; then
-                continue
-            fi
+            printf "是否仍然强制添加此规则? (y/N): "
+            read -r force_add
+            case "$force_add" in
+                [Yy]*) ;;
+                *) continue ;;
+            esac
         fi
         break
     done
@@ -849,8 +847,9 @@ interactive_add_rule() {
     echo "  1) TCP + UDP (默认，推荐)"
     echo "  2) 仅 TCP"
     echo "  3) 仅 UDP"
-    read -r -p "请输入选项 [1-3] (回车默认 1): " proto_choice
-    local proto="all"
+    printf "请输入选项 [1-3] (回车默认 1): "
+    read -r proto_choice
+    proto="all"
     case "$proto_choice" in
         2) proto="tcp" ;;
         3) proto="udp" ;;
@@ -858,8 +857,9 @@ interactive_add_rule() {
     esac
 
     # 本地绑定 IP (可选)
-    read -r -p "请输入本地绑定 IP (回车默认 0.0.0.0 全部监听): " bind_ip
-    bind_ip="${bind_ip// /}"
+    printf "请输入本地绑定 IP (回车默认 0.0.0.0 全部监听): "
+    read -r bind_ip
+    bind_ip=$(echo "$bind_ip" | tr -d '[:space:]')
     bind_ip="${bind_ip:-0.0.0.0}"
 
     install_gost_binary
@@ -877,10 +877,11 @@ interactive_add_rule() {
 # 交互式删除规则
 interactive_delete_rule() {
     echo ""
-    echo -e "${BOLD}=== 删除 GOST 端口转发规则 ===${NC}"
+    printf "%b=== 删除 GOST 端口转发规则 ===%b\n" "$BOLD" "$NC"
     list_rules
-    read -r -p "请输入要删除的规则 ID (输入 0 或直接回车取消): " del_id
-    del_id="${del_id// /}"
+    printf "请输入要删除的规则 ID (输入 0 或直接回车取消): "
+    read -r del_id
+    del_id=$(echo "$del_id" | tr -d '[:space:]')
     if [ -z "$del_id" ] || [ "$del_id" = "0" ]; then
         log_info "已取消删除"
         return 0
@@ -895,7 +896,6 @@ interactive_delete_rule() {
 
 # 查看日志
 view_logs() {
-    local os
     os="$(detect_os)"
     log_info "正在查看服务日志 (按 Ctrl+C 退出)..."
     sleep 1
@@ -912,12 +912,11 @@ view_logs() {
 
 # 交互式服务控制
 interactive_service_control() {
-    while true; do
+    while :; do
         echo ""
-        echo -e "${BOLD}=== GOST 服务与自启控制 ===${NC}"
-        local cur_status
+        printf "%b=== GOST 服务与自启控制 ===%b\n" "$BOLD" "$NC"
         cur_status="$(get_service_status)"
-        echo -e "当前运行状态: ${cur_status}"
+        printf "当前运行状态: %s\n" "$cur_status"
         echo "1. 启动服务"
         echo "2. 停止服务"
         echo "3. 重启服务"
@@ -925,7 +924,8 @@ interactive_service_control() {
         echo "5. 关闭开机自启"
         echo "6. 查看实时服务日志"
         echo "0. 返回主菜单"
-        read -r -p "请选择操作 [0-6]: " s_choice
+        printf "请选择操作 [0-6]: "
+        read -r s_choice
         case "$s_choice" in
             1) start_service ;;
             2) stop_service ;;
@@ -942,18 +942,21 @@ interactive_service_control() {
 # 交互式完全卸载
 interactive_uninstall() {
     echo ""
-    echo -e "${RED}${BOLD}=== 完全卸载 GOST 服务 ===${NC}"
-    read -r -p "⚠️ 确认要停止并彻底卸载 GOST 及所有转发规则配置吗？(y/N): " confirm
-    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
-        log_info "已取消卸载"
-        return 0
-    fi
+    printf "%b%b=== 完全卸载 GOST 服务 ===%b\n" "$RED" "$BOLD" "$NC"
+    printf "⚠️ 确认要停止并彻底卸载 GOST 及所有转发规则配置吗？(y/N): "
+    read -r confirm
+    case "$confirm" in
+        [Yy]*) ;;
+        *)
+            log_info "已取消卸载"
+            return 0
+            ;;
+    esac
 
     log_info "正在停止并清理服务..."
     stop_service 2>/dev/null || true
     disable_autostart 2>/dev/null || true
 
-    local os
     os="$(detect_os)"
     if [ "$os" = "alpine" ]; then
         rm -f "${OPENRC_SERVICE_DIR}/${SERVICE_NAME}" 2>/dev/null || true
@@ -972,79 +975,80 @@ interactive_uninstall() {
 # 展示主菜单面板
 show_menu() {
     clear 2>/dev/null || true
-    local os
     os="$(detect_os)"
-    local s_status
     s_status="$(get_service_status)"
-    local s_display
     case "$s_status" in
         running) s_display="${GREEN}● 运行中${NC}" ;;
         stopped) s_display="${YELLOW}○ 已停止${NC}" ;;
         *) s_display="${RED}未安装/未配置${NC}" ;;
     esac
 
-    local auto_display
     if is_autostart_enabled; then
         auto_display="${GREEN}✅ 已开启${NC}"
     else
         auto_display="${YELLOW}❌ 未开启${NC}"
     fi
 
-    local rule_count=0
+    rule_count=0
     if [ -f "$RULES_FILE" ]; then
         rule_count=$(grep -v '^#' "$RULES_FILE" 2>/dev/null | grep -v '^$' | wc -l || echo 0)
-        rule_count="${rule_count// /}"
+        rule_count=$(echo "$rule_count" | tr -d '[:space:]')
     fi
 
-    local gost_ver="未安装"
+    gost_ver="未安装"
     if [ -x "$GOST_BIN" ]; then
         gost_ver="$("$GOST_BIN" -V 2>&1 | head -n 1 | awk '{print $NF}')"
         [ -z "$gost_ver" ] && gost_ver="已安装"
     fi
 
-    echo -e "${CYAN}================================================================${NC}"
-    echo -e "       ${BOLD}GOST 端口转发自动化管理面板 (v${SCRIPT_VERSION})${NC}"
-    echo -e "${CYAN}================================================================${NC}"
+    printf "%b================================================================%b\n" "$CYAN" "$NC"
+    printf "       %bGOST 端口转发自动化管理面板 (v%s)%b\n" "$BOLD" "$SCRIPT_VERSION" "$NC"
+    printf "%b================================================================%b\n" "$CYAN" "$NC"
     printf " 系统发行版: %-12s | GOST 版本: %s\n" "$os" "$gost_ver"
     printf " 服务状态  : %b   | 开机自启: %b\n" "$s_display" "$auto_display"
     printf " 当前规则数: %s 条\n" "$rule_count"
-    echo -e "${CYAN}================================================================${NC}"
+    printf "%b================================================================%b\n" "$CYAN" "$NC"
     echo " 1. ➕ 添加转发规则 (IP/域名, 端口或端口段)"
     echo " 2. 📋 查看所有规则与当前运行状态"
     echo " 3. 🗑️  删除指定转发规则"
     echo " 4. ⚙️  服务管理 (启动 / 停止 / 重启 / 自启)"
     echo " 5. 🧹 完全卸载 GOST 服务及清理配置"
     echo " 0. 🚪 退出脚本"
-    echo -e "${CYAN}================================================================${NC}"
+    printf "%b================================================================%b\n" "$CYAN" "$NC"
 }
 
 # TUI 交互主循环
 menu_loop() {
     require_root
     ensure_config_dir
-    while true; do
+    while :; do
         show_menu
-        read -r -p "请选择操作 [0-5]: " choice
+        printf "请选择操作 [0-5]: "
+        read -r choice
         case "$choice" in
             1)
                 interactive_add_rule
-                read -r -p "按回车键继续..."
+                printf "按回车键继续..."
+                read -r _
                 ;;
             2)
                 echo ""
                 list_rules
-                read -r -p "按回车键继续..."
+                printf "按回车键继续..."
+                read -r _
                 ;;
             3)
                 interactive_delete_rule
-                read -r -p "按回车键继续..."
+                printf "按回车键继续..."
+                read -r _
                 ;;
             4)
                 interactive_service_control
                 ;;
             5)
                 interactive_uninstall
-                read -r -p "按回车键继续..."
+                printf "按回车键继续..."
+                read -r _
                 ;;
             0)
                 echo "感谢使用，再见！"
@@ -1060,7 +1064,6 @@ menu_loop() {
 
 # 主入口分流
 main() {
-    # 检查是否仅为 source 引入
     for arg in "$@"; do
         if [ "$arg" = "--source-only" ]; then
             return 0 2>/dev/null || exit 0

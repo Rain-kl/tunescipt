@@ -1,12 +1,12 @@
-#!/bin/bash
-set -euo pipefail
+#!/bin/sh
+set -e
 
 export TEST_MODE=1
 export GOST_CONFIG_DIR="./tmp_test_gost"
 mkdir -p "$GOST_CONFIG_DIR"
 trap 'rm -rf "$GOST_CONFIG_DIR"' EXIT
 
-source ./gost.sh --source-only
+. ./gost.sh --source-only
 
 # 测试 1: 添加规则并生成 YAML
 echo "Testing adding rules..."
