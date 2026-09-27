@@ -13,6 +13,7 @@ SCRIPT_VERSION="1.0.0"
 GOST_CONFIG_DIR="${GOST_CONFIG_DIR:-/etc/gost}"
 RULES_FILE="${GOST_CONFIG_DIR}/rules.conf"
 CONFIG_FILE="${GOST_CONFIG_DIR}/config.yaml"
+ARGS_FILE="${GOST_CONFIG_DIR}/args"
 GOST_BIN="${GOST_BIN:-/usr/local/bin/gost}"
 SYSTEMD_SERVICE_DIR="${SYSTEMD_SERVICE_DIR:-/etc/systemd/system}"
 OPENRC_SERVICE_DIR="${OPENRC_SERVICE_DIR:-/etc/init.d}"
@@ -393,9 +394,10 @@ list_rules() {
     echo ""
 }
 
-# 编译生成 GOST v3 config.yaml
+# 编译生成 GOST 启动参数 (args) 与 config.yaml
 generate_gost_config() {
     ensure_config_dir
+    tmp_args=$(mktemp "${GOST_CONFIG_DIR}/args.tmp.XXXXXX")
     tmp_yaml=$(mktemp "${GOST_CONFIG_DIR}/config.yaml.tmp.XXXXXX")
 
     cat << 'EOF' > "$tmp_yaml"
@@ -403,6 +405,7 @@ generate_gost_config() {
 # 由 gost.sh 自动维护
 services:
 EOF
+    : > "$tmp_args"
 
     has_services=0
     while IFS='|' read -r r_id r_target r_port r_proto r_bind r_status || [ -n "$r_id" ]; do
@@ -432,8 +435,9 @@ EOF
         esac
         target_addr="${formatted_target}:${r_port}"
 
-        # 根据协议生成 TCP / UDP 配置
+        # 拼装 CLI 启动参数 (-L tcp://... -L udp://...)，GOST 原生由此支持端口段展开
         if [ "$r_proto" = "all" ] || [ "$r_proto" = "tcp" ]; then
+            printf " -L tcp://%s/%s" "$listen_addr" "$target_addr" >> "$tmp_args"
             cat << EOF >> "$tmp_yaml"
   - name: fwd-tcp-${r_id}
     addr: "${listen_addr}"
@@ -449,6 +453,7 @@ EOF
         fi
 
         if [ "$r_proto" = "all" ] || [ "$r_proto" = "udp" ]; then
+            printf " -L udp://%s/%s" "$listen_addr" "$target_addr" >> "$tmp_args"
             cat << EOF >> "$tmp_yaml"
   - name: fwd-udp-${r_id}
     addr: "${listen_addr}"
@@ -468,6 +473,9 @@ EOF
         echo "# 暂无启用的转发规则" >> "$tmp_yaml"
     fi
 
+    echo "" >> "$tmp_args"
+    mv "$tmp_args" "$ARGS_FILE"
+    chmod 644 "$ARGS_FILE"
     mv "$tmp_yaml" "$CONFIG_FILE"
     chmod 644 "$CONFIG_FILE"
     return 0
@@ -488,7 +496,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=${GOST_BIN} -C ${CONFIG_FILE}
+ExecStart=/bin/sh -c 'exec ${GOST_BIN} \$(cat ${ARGS_FILE})'
 Restart=always
 RestartSec=3
 LimitNOFILE=1048576
@@ -507,8 +515,8 @@ generate_openrc_service() {
 #!/sbin/openrc-run
 description="GOST Port Forward Service"
 
-command="${GOST_BIN}"
-command_args="-C ${CONFIG_FILE}"
+command="/bin/sh"
+command_args="-c 'exec ${GOST_BIN} \$(cat ${ARGS_FILE})'"
 command_background="yes"
 pidfile="/run/${SERVICE_NAME}.pid"
 rc_ulimit="-n 1048576"
@@ -1064,6 +1072,10 @@ menu_loop() {
 
 # 主入口分流
 main() {
+    if [ "${SOURCE_ONLY:-0}" = "1" ]; then
+        return 0 2>/dev/null || exit 0
+    fi
+
     for arg in "$@"; do
         if [ "$arg" = "--source-only" ]; then
             return 0 2>/dev/null || exit 0
