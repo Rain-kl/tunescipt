@@ -7,7 +7,7 @@ mkdir -p "$IPT_CONFIG_DIR"
 trap 'rm -rf "$IPT_CONFIG_DIR"' EXIT
 
 # shellcheck disable=SC1091
-. ./iptables.sh --source-only
+. ./port-forward-iptables.sh --source-only
 
 # 测试 1: 添加规则
 echo "Testing adding rules..."

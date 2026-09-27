@@ -57,12 +57,12 @@ curl -fsSL https://raw.githubusercontent.com/Rain-kl/tunescipt/main/socks5.sh -o
 **1. CLI 一键非交互部署 (自动后台常驻与开机自启):**
 ```bash
 # 自动部署并转发 8080 的所有 TCP/UDP 流量至目标 IP 对应端口
-curl -fsSL https://raw.githubusercontent.com/Rain-kl/tunescipt/main/gost.sh -o /tmp/gost.sh && sh /tmp/gost.sh -d <目标IP或域名> -p 8080
+curl -fsSL https://raw.githubusercontent.com/Rain-kl/tunescipt/main/port-forward-gost.sh -o /tmp/port-forward-gost.sh && sh /tmp/port-forward-gost.sh -d <目标IP或域名> -p 8080
 ```
 
 **2. 交互式 TUI 管理面板:**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Rain-kl/tunescipt/main/gost.sh -o /tmp/gost.sh && sh /tmp/gost.sh
+curl -fsSL https://raw.githubusercontent.com/Rain-kl/tunescipt/main/port-forward-gost.sh -o /tmp/port-forward-gost.sh && sh /tmp/port-forward-gost.sh
 ```
 
 ---
@@ -76,12 +76,12 @@ curl -fsSL https://raw.githubusercontent.com/Rain-kl/tunescipt/main/gost.sh -o /
 **1. CLI 一键非交互部署 (自动开启内核转发并开机持久化):**
 ```bash
 # 零内存损耗转发 10000-50000 大范围所有 TCP/UDP 流量至目标 IP
-curl -fsSL https://raw.githubusercontent.com/Rain-kl/tunescipt/main/iptables.sh -o /tmp/iptables.sh && sh /tmp/iptables.sh -d <目标IP或域名> -p 10000-50000
+curl -fsSL https://raw.githubusercontent.com/Rain-kl/tunescipt/main/port-forward-iptables.sh -o /tmp/port-forward-iptables.sh && sh /tmp/port-forward-iptables.sh -d <目标IP或域名> -p 10000-50000
 ```
 
 **2. 交互式 TUI 管理面板:**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Rain-kl/tunescipt/main/iptables.sh -o /tmp/iptables.sh && sh /tmp/iptables.sh
+curl -fsSL https://raw.githubusercontent.com/Rain-kl/tunescipt/main/port-forward-iptables.sh -o /tmp/port-forward-iptables.sh && sh /tmp/port-forward-iptables.sh
 ```
 
 ### CLI 参数说明

@@ -1,6 +1,6 @@
 #!/bin/sh
 # ==============================================================================
-# Script Name: gost.sh
+# Script Name: port-forward-gost.sh
 # Description: GOST v3 端口转发自动化部署与管理脚本 (兼容 POSIX sh，支持 Alpine/Debian 等)
 # Author: Rain-kl & Antigravity
 # GitHub: https://github.com/Rain-kl/tunescipt
@@ -155,8 +155,8 @@ validate_target() {
 show_help() {
     printf "%bGOST 端口转发自动化部署脚本 (v%s)%b\n\n" "$BOLD" "$SCRIPT_VERSION" "$NC"
     printf "%b用法:%b\n" "$BOLD" "$NC"
-    printf "  sh gost.sh [选项]\n"
-    printf "  curl -fsSL https://raw.githubusercontent.com/Rain-kl/tunescipt/main/gost.sh | sh -s -- [选项]\n\n"
+    printf "  sh port-forward-gost.sh [选项]\n"
+    printf "  curl -fsSL https://raw.githubusercontent.com/Rain-kl/tunescipt/main/port-forward-gost.sh | sh -s -- [选项]\n\n"
     printf "%bCLI 快速选项:%b\n" "$BOLD" "$NC"
     printf "  -d, --destination <ip/domain>   目标转发地址 (必填，支持域名或 IPv4/IPv6)\n"
     printf "  -p, --port <port/range>         转发端口或端口范围 (必填，如 8080 或 10000-50000)\n"
@@ -165,13 +165,13 @@ show_help() {
     printf "  -h, --help                      显示帮助信息\n\n"
     printf "%b示例 (必须以 root 运行):%b\n" "$BOLD" "$NC"
     printf "  # 转发本地 8080 的所有 TCP/UDP 流量至 1.2.3.4\n"
-    printf "  sh gost.sh -d 1.2.3.4 -p 8080\n\n"
+    printf "  sh port-forward-gost.sh -d 1.2.3.4 -p 8080\n\n"
     printf "  # 转发本地端口段 10000-10020 的所有 TCP/UDP 流量至 1.2.3.4\n"
-    printf "  sh gost.sh -d 1.2.3.4 -p 10000-10020\n\n"
+    printf "  sh port-forward-gost.sh -d 1.2.3.4 -p 10000-10020\n\n"
     printf "  # 仅转发 TCP 端口 8443 至目标域名\n"
-    printf "  sh gost.sh -d hk.example.com -p 8443 -m tcp\n\n"
+    printf "  sh port-forward-gost.sh -d hk.example.com -p 8443 -m tcp\n\n"
     printf "  # 不带任何参数运行，将进入交互式 TUI 管理面板:\n"
-    printf "  sh gost.sh\n"
+    printf "  sh port-forward-gost.sh\n"
 }
 
 # 解析 CLI 命令行参数
@@ -410,7 +410,7 @@ generate_gost_config() {
 
     cat << 'EOF' > "$tmp_yaml"
 # GOST v3 自动化生成配置文件 (请勿手动修改)
-# 由 gost.sh 自动维护
+# 由 port-forward-gost.sh 自动维护
 services:
 EOF
     : > "$tmp_args"

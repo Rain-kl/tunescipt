@@ -7,7 +7,7 @@ export TEST_DIR="./tmp_service_test"
 mkdir -p "$TEST_DIR/system" "$TEST_DIR/init.d"
 trap 'rm -rf "$TEST_DIR"' EXIT
 
-. ./gost.sh
+. ./port-forward-gost.sh
 
 # 测试 1: Systemd 服务模板生成
 echo "Testing Systemd service template generation..."

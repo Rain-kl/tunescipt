@@ -1,6 +1,6 @@
 #!/bin/sh
 # ==============================================================================
-# Script Name: iptables.sh
+# Script Name: port-forward-iptables.sh
 # Description: iptables 内核级端口转发自动化部署与管理脚本 (兼容 POSIX sh，支持 Alpine/Debian 等)
 # Author: Rain-kl & Antigravity
 # GitHub: https://github.com/Rain-kl/tunescipt
@@ -145,8 +145,8 @@ validate_target() {
 show_help() {
     printf "%biptables 内核端口转发自动化部署脚本 (v%s)%b\n\n" "$BOLD" "$SCRIPT_VERSION" "$NC"
     printf "%b用法:%b\n" "$BOLD" "$NC"
-    printf "  sh iptables.sh [选项]\n"
-    printf "  curl -fsSL https://raw.githubusercontent.com/Rain-kl/tunescipt/main/iptables.sh | sh -s -- [选项]\n\n"
+    printf "  sh port-forward-iptables.sh [选项]\n"
+    printf "  curl -fsSL https://raw.githubusercontent.com/Rain-kl/tunescipt/main/port-forward-iptables.sh | sh -s -- [选项]\n\n"
     printf "%bCLI 快速选项:%b\n" "$BOLD" "$NC"
     printf "  -d, --destination <ip/domain>   目标转发地址 (必填，支持域名或 IPv4)\n"
     printf "  -p, --port <port/range>         转发端口或端口范围 (必填，如 8080 或 10000-50000)\n"
@@ -155,11 +155,11 @@ show_help() {
     printf "  -h, --help                      显示帮助信息\n\n"
     printf "%b示例 (必须以 root 运行):%b\n" "$BOLD" "$NC"
     printf "  # 内核零损耗转发 10000-50000 的所有 TCP/UDP 流量至 163.192.29.228\n"
-    printf "  sh iptables.sh -d 163.192.29.228 -p 10000-50000\n\n"
+    printf "  sh port-forward-iptables.sh -d 163.192.29.228 -p 10000-50000\n\n"
     printf "  # 仅转发 TCP 端口 40000 至目标 IP\n"
-    printf "  sh iptables.sh -d 163.192.29.228 -p 40000 -m tcp\n\n"
+    printf "  sh port-forward-iptables.sh -d 163.192.29.228 -p 40000 -m tcp\n\n"
     printf "  # 不带任何参数运行，将进入交互式 TUI 管理面板:\n"
-    printf "  sh iptables.sh\n"
+    printf "  sh port-forward-iptables.sh\n"
 }
 
 # 解析 CLI 命令行参数

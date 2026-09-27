@@ -4,7 +4,7 @@ set -e
 # 引入函数 (规避 root 检查与主入口直接运行)
 export TEST_MODE=1
 export SOURCE_ONLY=1
-. ./gost.sh
+. ./port-forward-gost.sh
 
 echo "Testing port range validation..."
 validate_port_range "8080"

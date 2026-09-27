@@ -4,10 +4,10 @@ set -eu
 # 引入函数 (规避 root 检查与主入口直接运行)
 export TEST_MODE=1
 
-# 检查当前目录或上层目录中的 iptables.sh
-SCRIPT_PATH="./iptables.sh"
+# 检查当前目录或上层目录中的 port-forward-iptables.sh
+SCRIPT_PATH="./port-forward-iptables.sh"
 if [ ! -f "$SCRIPT_PATH" ]; then
-    echo "iptables.sh not found yet"
+    echo "port-forward-iptables.sh not found yet"
     exit 1
 fi
 
