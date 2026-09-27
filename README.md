@@ -46,37 +46,55 @@ HDD 磁盘: 优先级较高（30-50），均衡使用两者
 curl -fsSL https://raw.githubusercontent.com/Rain-kl/tunescipt/main/socks5.sh -o /tmp/socks5.sh && bash /tmp/socks5.sh
 ```
 
-## GOST 端口段转发脚本 (支持 Alpine / Debian 系)
+## GOST 端口转发脚本 (支持 Alpine / Debian 系)
 
-基于高性能 **GOST v3** 核心的高并发端口段转发自动化部署脚本，支持原生 Unix 命令运行、无第三方语言依赖，深度适配 Alpine Linux (OpenRC) 与 Debian / Ubuntu / CentOS 等发行版 (Systemd)。
+基于高性能 **GOST v3** 核心的端口转发自动化部署脚本，支持原生 Unix 命令运行、无第三方语言依赖，深度适配 Alpine Linux (OpenRC) 与 Debian / Ubuntu / CentOS 等发行版 (Systemd)。
 
-> ⚠️ **注意**：本仓库系列脚本必须由 **root** 用户直接运行（Alpine Linux 等精简系统默认不带 `sudo`，请先执行 `su -` 切换至 root）。
+> ⚠️ **注意**：本仓库系列脚本必须由 **root** 用户直接运行（Alpine Linux 等精简系统默认不带 `sudo`，请先执行 `su -` 切换至 root），请使用 `sh` 运行。
 
 ### 🚀 快速开始
 
 **1. CLI 一键非交互部署 (自动后台常驻与开机自启):**
 ```bash
-# 自动部署并转发 10000-50000 的所有 TCP/UDP 流量至目标 IP 对应端口
-curl -fsSL https://raw.githubusercontent.com/Rain-kl/tunescipt/main/gost.sh -o /tmp/gost.sh && bash /tmp/gost.sh -d <目标IP或域名> -p 10000-50000
+# 自动部署并转发 8080 的所有 TCP/UDP 流量至目标 IP 对应端口
+curl -fsSL https://raw.githubusercontent.com/Rain-kl/tunescipt/main/gost.sh -o /tmp/gost.sh && sh /tmp/gost.sh -d <目标IP或域名> -p 8080
 ```
 
 **2. 交互式 TUI 管理面板:**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Rain-kl/tunescipt/main/gost.sh -o /tmp/gost.sh && bash /tmp/gost.sh
+curl -fsSL https://raw.githubusercontent.com/Rain-kl/tunescipt/main/gost.sh -o /tmp/gost.sh && sh /tmp/gost.sh
+```
+
+---
+
+## iptables 内核级端口转发脚本 (支持万级超大端口段)
+
+基于 Linux 内核原生 **iptables (NAT/DNAT/SNAT)** 的零内存损耗端口转发自动化管理脚本。由于在内核网络栈直接改包，相比用户态代理程序，转发成千上万个端口（如 `10000-50000`）时系统**内存增加 0 MB**，耗时 0 秒，极速线速转发！
+
+### 🚀 快速开始
+
+**1. CLI 一键非交互部署 (自动开启内核转发并开机持久化):**
+```bash
+# 零内存损耗转发 10000-50000 大范围所有 TCP/UDP 流量至目标 IP
+curl -fsSL https://raw.githubusercontent.com/Rain-kl/tunescipt/main/iptables.sh -o /tmp/iptables.sh && sh /tmp/iptables.sh -d <目标IP或域名> -p 10000-50000
+```
+
+**2. 交互式 TUI 管理面板:**
+```bash
+curl -fsSL https://raw.githubusercontent.com/Rain-kl/tunescipt/main/iptables.sh -o /tmp/iptables.sh && sh /tmp/iptables.sh
 ```
 
 ### CLI 参数说明
 
 | 参数 | 长参数 | 必须 | 说明 | 示例 |
 |---|---|---|---|---|
-| `-d` | `--destination` | 是 | 目标转发地址 (支持 IPv4 / IPv6 / 域名) | `-d 1.2.3.4` 或 `-d target.example.com` |
+| `-d` | `--destination` | 是 | 目标转发地址 (支持 IPv4 / 域名) | `-d 1.2.3.4` 或 `-d target.example.com` |
 | `-p` | `--port` | 是 | 转发端口或端口范围 (端口一一对应) | `-p 8080` 或 `-p 10000-50000` |
-| `-m` | `--mode` | 否 | 转发协议 (`all`, `tcp`, `udp`，默认: `all`) | `-m tcp` |
+| `-m` | `--mode` | 否 | 转发协议 (`all`, `tcp`, `udp`，默认: `all`) | `-m all` |
 | `-b` | `--bind` | 否 | 本地监听绑定地址 (默认: `0.0.0.0`) | `-b 0.0.0.0` |
 | `-h` | `--help` | 否 | 查看帮助文档与示例 | `-h` |
 
 ### 核心特性
-- **跨平台自适应**：自动识别 Debian/Ubuntu/CentOS (`systemd`) 与 Alpine Linux (`OpenRC`)，自动注册为系统后台服务并开启开机自启。
-- **高并发端口段优化**：针对 `10000-50000` 等达数万端口的并发监听，在服务配置中自动注入 `LimitNOFILE=1048576`，杜绝文件句柄耗尽错误。
-- **多规则库持久化**：规则持久保存在 `/etc/gost/rules.conf`，动态生成 GOST 官方标准 YAML 配置，可在 TUI 中便捷管理多条规则。
-- **防火墙联动**：自动检测并放行 `UFW` 或 `Firewalld` 对应端口。
+- **专用自定义链隔离**：采用 `IPT_FWD_PREROUTING`, `IPT_FWD_POSTROUTING`, `IPT_FWD_FORWARD` 专用链管理，绝不污染或破坏 Docker / Tailscale / UFW 等系统规则。
+- **环境自适应固化**：自动开启并固化 `net.ipv4.ip_forward = 1`，跨发行版自动适配规则持久化服务（Alpine `iptables-openrc`、Debian/Ubuntu `netfilter-persistent`、CentOS `iptables-services`）。
+- **零内存消耗**：大端口段在内核仅需 1 条规则，彻底解决应用层代理（GOST 等）在转发几万个端口时内存爆满、启动慢、假死问题。
